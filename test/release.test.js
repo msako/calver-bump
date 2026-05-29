@@ -82,7 +82,7 @@ test('runRelease updates package-lock.json when it exists', async () => {
   assert.equal(lock.packages[''].version, '2026.05.29.1');
 });
 
-test('runRelease uses the latest CalVer tag as the changelog base and ignores other tags', async () => {
+test('runRelease uses the latest reachable tag as the changelog base', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['tag', '2026.05.28.1'], { cwd: repo });
   await writeFile(path.join(repo, 'feature-a.txt'), 'a\n');
@@ -207,6 +207,23 @@ test('runRelease prepends only commits since the previous CalVer tag on later re
   assert.match(latestEntry, /## 2026\.05\.29\.2 - 2026-05-29/);
   assert.match(latestEntry, /- fix: second release only/);
   assert.doesNotMatch(latestEntry, /feat: initial app/);
+});
+
+test('runRelease uses the latest reachable tag as the changelog base even when it is not CalVer', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['tag', 'v2.20'], { cwd: repo });
+  await writeFile(path.join(repo, 'later.txt'), 'later\n');
+  execFileSync('git', ['add', 'later.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: after legacy version tag'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(changelog, /- fix: after legacy version tag/);
+  assert.doesNotMatch(changelog, /- feat: initial app/);
 });
 
 test('runRelease rolls back its release commit when tag creation fails', async () => {

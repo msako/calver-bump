@@ -3,7 +3,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { isoDate, isCalVerTag, nextCalVer } from './calver.js';
+import { isoDate, nextCalVer } from './calver.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -232,7 +232,7 @@ async function latestReachableTag(cwd) {
     '--format=%(refname:short)',
     'refs/tags',
   ]);
-  return tags.find(isCalVerTag) ?? null;
+  return tags[0] ?? null;
 }
 
 async function currentBranch(cwd) {

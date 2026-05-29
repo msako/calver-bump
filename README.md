@@ -45,10 +45,10 @@ npx calver-bump --format compact
 - The default `dotted` format is `YYYY.MM.DD.N`.
 - The optional `compact` format is `YYYYMMDD.N`.
 - Existing `v`-prefixed tags are considered when calculating the next sequence number.
-- Changelog ranges ignore non-CalVer tags.
+- Changelog ranges start from the latest reachable tag, even when it is not a CalVer tag.
 - Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.
 - Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes`.
 - Changelog entries link to their commit hash for GitHub and GitLab-style `origin` remotes.
-- Later releases prepend only commits since the previous CalVer tag.
+- Later releases prepend only commits since the previous reachable tag.
 - The working tree must be clean before creating a real release.
 - If tag creation fails after the release commit, the CLI rolls back its own release commit.
