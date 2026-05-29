@@ -127,8 +127,14 @@ async function prependChangelog(cwd, version, date) {
 async function releaseNotes(cwd) {
   const latestTag = await latestReachableTag(cwd);
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
-  const lines = await gitLines(cwd, ['log', '--pretty=%s', ...range]);
-  const conventionalCommits = lines.filter(isConventionalCommit);
+  const commits = await gitCommits(cwd, range);
+  const commitUrlBuilder = await commitUrlBuilderForOrigin(cwd);
+  const conventionalCommits = commits
+    .filter((commit) => isConventionalCommit(commit.subject))
+    .map((commit) => ({
+      ...commit,
+      url: commitUrlBuilder ? commitUrlBuilder(commit.hash) : null,
+    }));
   return conventionalCommits.length > 0 ? conventionalCommits : ['No conventional commits in this release.'];
 }
 
@@ -141,9 +147,9 @@ function formatReleaseNotes(changes) {
     return `- ${changes[0]}`;
   }
 
-  const features = changes.filter((change) => conventionalType(change) === 'feat');
-  const fixes = changes.filter((change) => conventionalType(change) === 'fix');
-  const other = changes.filter((change) => !['feat', 'fix'].includes(conventionalType(change)));
+  const features = changes.filter((change) => conventionalType(change.subject) === 'feat');
+  const fixes = changes.filter((change) => conventionalType(change.subject) === 'fix');
+  const other = changes.filter((change) => !['feat', 'fix'].includes(conventionalType(change.subject)));
   const sections = [
     ['Features', features],
     ['Fixes', fixes],
@@ -152,12 +158,69 @@ function formatReleaseNotes(changes) {
 
   return sections
     .filter(([, entries]) => entries.length > 0)
-    .map(([heading, entries]) => `### ${heading}\n\n${entries.map((entry) => `- ${entry}`).join('\n')}`)
+    .map(([heading, entries]) => `### ${heading}\n\n${entries.map((entry) => `- ${formatCommitEntry(entry)}`).join('\n')}`)
     .join('\n\n');
 }
 
 function conventionalType(subject) {
   return /^(?<type>[a-z]+)(\([^)]+\))?!?: .+/.exec(subject)?.groups.type;
+}
+
+function formatCommitEntry(commit) {
+  const shortHash = commit.hash.slice(0, 7);
+  const suffix = commit.url ? ` ([${shortHash}](${commit.url}))` : ` (${shortHash})`;
+  return `${commit.subject}${suffix}`;
+}
+
+async function gitCommits(cwd, range) {
+  const { stdout } = await git(cwd, ['log', '--pretty=format:%H%x00%s', ...range]);
+  return stdout
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, subject] = line.split('\0');
+      return { hash, subject };
+    });
+}
+
+async function commitUrlBuilderForOrigin(cwd) {
+  try {
+    const { stdout } = await git(cwd, ['remote', 'get-url', 'origin']);
+    return commitUrlBuilder(stdout.trim());
+  } catch {
+    return null;
+  }
+}
+
+function commitUrlBuilder(remote) {
+  const parsed = parseGitRemote(remote);
+  if (!parsed) {
+    return null;
+  }
+
+  const baseUrl = `https://${parsed.host}/${parsed.repo}`;
+  if (parsed.host === 'github.com') {
+    return (hash) => `${baseUrl}/commit/${hash}`;
+  }
+  if (parsed.host.includes('gitlab')) {
+    return (hash) => `${baseUrl}/-/commit/${hash}`;
+  }
+
+  return null;
+}
+
+function parseGitRemote(remote) {
+  const sshMatch = /^git@(?<host>[^:]+):(?<repo>.+?)(?:\.git)?$/.exec(remote);
+  if (sshMatch) {
+    return sshMatch.groups;
+  }
+
+  const httpsMatch = /^https:\/\/(?<host>[^/]+)\/(?<repo>.+?)(?:\.git)?$/.exec(remote);
+  if (httpsMatch) {
+    return httpsMatch.groups;
+  }
+
+  return null;
 }
 
 async function latestReachableTag(cwd) {

@@ -141,8 +141,72 @@ test('runRelease groups changelog entries by conventional commit type', async ()
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    /## 2026\.05\.29\.1 - 2026-05-29\n\n### Features\n\n- feat: add release grouping\n- feat: initial app\n\n### Fixes\n\n- fix\(auth\): repair token refresh/,
+    /## 2026\.05\.29\.1 - 2026-05-29\n\n### Features\n\n- feat: add release grouping \([a-f0-9]{7}\)\n- feat: initial app \([a-f0-9]{7}\)\n\n### Fixes\n\n- fix\(auth\): repair token refresh \([a-f0-9]{7}\)/,
   );
+});
+
+test('runRelease links each changelog entry to its commit on GitHub', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:msako/demo-app.git'], { cwd: repo });
+  await writeFile(path.join(repo, 'feature.txt'), 'feature\n');
+  execFileSync('git', ['add', 'feature.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: add linked changelog entry'], { cwd: repo });
+  const hash = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const shortHash = hash.slice(0, 7);
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(
+    changelog,
+    new RegExp(`- feat: add linked changelog entry \\(\\[${shortHash}\\]\\(https://github\\.com/msako/demo-app/commit/${hash}\\)\\)`),
+  );
+});
+
+test('runRelease links changelog entries for private GitLab-style remotes', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
+  await writeFile(path.join(repo, 'feature.txt'), 'feature\n');
+  execFileSync('git', ['add', 'feature.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: link private gitlab commit'], { cwd: repo });
+  const hash = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const shortHash = hash.slice(0, 7);
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(
+    changelog,
+    new RegExp(`- fix: link private gitlab commit \\(\\[${shortHash}\\]\\(https://gitlab\\.internal\\.example\\.com/platform/demo-app/-/commit/${hash}\\)\\)`),
+  );
+});
+
+test('runRelease prepends only commits since the previous CalVer tag on later releases', async () => {
+  const repo = await makeRepo();
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+  await writeFile(path.join(repo, 'second.txt'), 'second\n');
+  execFileSync('git', ['add', 'second.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: second release only'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T13:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  const latestEntry = changelog.split('## 2026.05.29.1 - 2026-05-29')[0];
+  assert.match(latestEntry, /## 2026\.05\.29\.2 - 2026-05-29/);
+  assert.match(latestEntry, /- fix: second release only/);
+  assert.doesNotMatch(latestEntry, /feat: initial app/);
 });
 
 test('runRelease rolls back its release commit when tag creation fails', async () => {
