@@ -18,7 +18,7 @@ Example:
 
 1. Bumps `package.json` to the next CalVer version.
 2. Updates `package-lock.json` or `npm-shrinkwrap.json` when present.
-3. Creates or prepends a `CHANGELOG.md` entry from git commits since the last CalVer tag.
+3. Creates or prepends a `CHANGELOG.md` entry from conventional commits since the last CalVer tag.
 4. Creates a release commit.
 5. Creates a git tag.
 
@@ -46,5 +46,7 @@ npx calver-bump --format compact
 - The optional `compact` format is `YYYYMMDD.N`.
 - Existing `v`-prefixed tags are considered when calculating the next sequence number.
 - Changelog ranges ignore non-CalVer tags.
+- Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.
+- Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes`.
 - The working tree must be clean before creating a real release.
 - If tag creation fails after the release commit, the CLI rolls back its own release commit.

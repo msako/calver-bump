@@ -108,7 +108,7 @@ async function fileExists(filePath) {
 async function prependChangelog(cwd, version, date) {
   const changelogPath = path.join(cwd, 'CHANGELOG.md');
   const changes = await releaseNotes(cwd);
-  const entry = `## ${version} - ${isoDate(date)}\n\n${changes.map((change) => `- ${change}`).join('\n')}\n`;
+  const entry = `## ${version} - ${isoDate(date)}\n\n${formatReleaseNotes(changes)}\n`;
   let existing = '';
 
   try {
@@ -128,7 +128,36 @@ async function releaseNotes(cwd) {
   const latestTag = await latestReachableTag(cwd);
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
   const lines = await gitLines(cwd, ['log', '--pretty=%s', ...range]);
-  return lines.length > 0 ? lines : ['Initial internal release.'];
+  const conventionalCommits = lines.filter(isConventionalCommit);
+  return conventionalCommits.length > 0 ? conventionalCommits : ['No conventional commits in this release.'];
+}
+
+function isConventionalCommit(subject) {
+  return /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/.test(subject);
+}
+
+function formatReleaseNotes(changes) {
+  if (changes.length === 1 && changes[0] === 'No conventional commits in this release.') {
+    return `- ${changes[0]}`;
+  }
+
+  const features = changes.filter((change) => conventionalType(change) === 'feat');
+  const fixes = changes.filter((change) => conventionalType(change) === 'fix');
+  const other = changes.filter((change) => !['feat', 'fix'].includes(conventionalType(change)));
+  const sections = [
+    ['Features', features],
+    ['Fixes', fixes],
+    ['Other Changes', other],
+  ];
+
+  return sections
+    .filter(([, entries]) => entries.length > 0)
+    .map(([heading, entries]) => `### ${heading}\n\n${entries.map((entry) => `- ${entry}`).join('\n')}`)
+    .join('\n\n');
+}
+
+function conventionalType(subject) {
+  return /^(?<type>[a-z]+)(\([^)]+\))?!?: .+/.exec(subject)?.groups.type;
 }
 
 async function latestReachableTag(cwd) {
