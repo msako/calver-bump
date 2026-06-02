@@ -5,13 +5,13 @@ Release CLI for applications and internal tools that use readable CalVer version
 Default version and tag format:
 
 ```text
-YY.MMDD.N
+YY.MMDD
 ```
 
 Example:
 
 ```text
-26.0529.1
+26.0529
 ```
 
 ## What it does
@@ -91,9 +91,9 @@ Project defaults can be stored in `.calverbumprc.json`:
 
 ## Notes
 
-- The default `short` format is `YY.MMDD.N`.
-- The optional `compact` format is `YYMMDD.N`.
-- The optional `long` format is `YYYY.MM.DD.N`.
+- The default `short` format is `YY.MMDD` for the first release of the day, then `YY.MMDD.1`, `YY.MMDD.2`, etc.
+- The optional `compact` format is `YYMMDD` for the first release of the day, then `YYMMDD.1`, `YYMMDD.2`, etc.
+- The optional `long` format is `YYYY.MM.DD` for the first release of the day, then `YYYY.MM.DD.1`, `YYYY.MM.DD.2`, etc.
 - Existing `v`-prefixed tags are considered when calculating the next sequence number.
 - Changelog ranges start from the latest reachable tag, even when it is not a CalVer tag.
 - Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.

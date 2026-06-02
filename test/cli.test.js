@@ -45,12 +45,12 @@ test('CLI reads .calverbumprc.json defaults', async () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /create git tag v26\.\d{4}\.1/);
-  const tag = execFileSync('git', ['tag', '--list', 'v26.*'], {
+  assert.match(result.stdout, /create git tag v26\.\d{4}/);
+  const tag = execFileSync('git', ['tag', '--list', 'v26*'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.match(tag, /^v26\.\d{4}\.1$/);
+  assert.match(tag, /^v26\.\d{4}$/);
 });
 
 test('CLI prints and runs push command when --push is enabled', async () => {
@@ -66,11 +66,11 @@ test('CLI prints and runs push command when --push is enabled', async () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Running: git push --follow-tags origin main/);
-  const remoteTags = execFileSync('git', ['tag', '--list', '26.*'], {
+  const remoteTags = execFileSync('git', ['tag', '--list', '26*'], {
     cwd: remote,
     encoding: 'utf8',
   }).trim();
-  assert.match(remoteTags, /^26\.\d{4}\.1$/);
+  assert.match(remoteTags, /^26\.\d{4}$/);
 });
 
 test('CLI supports --remote with --push', async () => {

@@ -2,14 +2,20 @@ export function nextCalVer({ date = new Date(), existingTags = [], format = 'sho
   assertFormat(format);
   const parts = dateParts(date);
   const prefix = calVerPrefix(parts, format);
-  const matcher = new RegExp(`^v?${escapeRegExp(prefix)}\\.(\\d+)$`);
-  const highest = existingTags.reduce((max, tag) => {
+  const matcher = new RegExp(`^v?${escapeRegExp(prefix)}(?:\\.(\\d+))?$`);
+  const releaseState = existingTags.reduce((state, tag) => {
     const match = matcher.exec(tag.trim());
-    if (!match) return max;
-    return Math.max(max, Number(match[1]));
-  }, 0);
+    if (!match) return state;
+    return {
+      hasBase: state.hasBase || !match[1],
+      highestSequence: match[1] ? Math.max(state.highestSequence, Number(match[1])) : state.highestSequence,
+    };
+  }, { hasBase: false, highestSequence: 0 });
 
-  return `${prefix}.${highest + 1}`;
+  if (!releaseState.hasBase && releaseState.highestSequence === 0) {
+    return prefix;
+  }
+  return `${prefix}.${releaseState.highestSequence + 1}`;
 }
 
 export function assertFormat(format) {
@@ -19,10 +25,10 @@ export function assertFormat(format) {
 }
 
 export function isCalVerTag(tag) {
-  return /^v?\d{2}\.\d{4}\.\d+$/.test(tag)
-    || /^v?\d{6}\.\d+$/.test(tag)
-    || /^v?\d{4}\.\d{2}\.\d{2}\.\d+$/.test(tag)
-    || /^v?\d{8}\.\d+$/.test(tag);
+  return /^v?\d{2}\.\d{4}(?:\.\d+)?$/.test(tag)
+    || /^v?\d{6}(?:\.\d+)?$/.test(tag)
+    || /^v?\d{4}\.\d{2}\.\d{2}(?:\.\d+)?$/.test(tag)
+    || /^v?\d{8}(?:\.\d+)?$/.test(tag);
 }
 
 export function isoDate(date = new Date()) {
