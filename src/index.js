@@ -153,6 +153,7 @@ async function releaseNotes(cwd, options = {}) {
   const requestUrlBuilder = remoteUrl ? buildRequestUrlBuilder(remoteUrl) : null;
   const allowedTypes = options.types ?? ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
   const conventionalCommits = commits
+    .map((commit) => ({ ...commit, subject: conventionalSubjectForCommit(commit) ?? commit.subject }))
     .filter((commit) => isConventionalCommit(commit.subject))
     .filter((commit) => allowedTypes.includes(conventionalType(commit.subject)))
     .filter((commit) => !isCommitInChangelog(commit, options.existingChangelog ?? ''))
@@ -184,6 +185,16 @@ function isCommitInChangelog(commit, changelog) {
 
 function isConventionalCommit(subject) {
   return /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/.test(subject);
+}
+
+function conventionalSubjectForCommit(commit) {
+  return commitLines(commit).find((line) => isConventionalCommit(line)) ?? null;
+}
+
+function commitLines(commit) {
+  return [commit.subject, ...(commit.body ?? '').split('\n')]
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 function formatReleaseNotes(changes) {
@@ -317,13 +328,12 @@ function requestForCommit(commit, requestUrlBuilder) {
 }
 
 function requestTitleForCommit(commit) {
-  if (isConventionalCommit(commit.subject)) {
-    return commit.subject;
+  const conventionalSubject = conventionalSubjectForCommit(commit);
+  if (conventionalSubject) {
+    return conventionalSubject;
   }
 
-  return (commit.body ?? '')
-    .split('\n')
-    .map((line) => line.trim())
+  return commitLines(commit)
     .find((line) => line && !parseRequestReference(line) && !/^Merge\b/i.test(line)) ?? null;
 }
 

@@ -269,6 +269,8 @@ test('runRelease links changelog entries to GitLab merge requests and dedupes th
   execFileSync('git', [
     'commit',
     '-m',
+    'Merge branch feature/review into main',
+    '-m',
     'fix(review): block rule-listed reviewers',
     '-m',
     'See merge request platform/demo-app!77',
