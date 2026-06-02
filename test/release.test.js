@@ -187,6 +187,7 @@ test('runRelease groups changelog entries by conventional commit type', async ()
 test('runRelease links each changelog entry to its commit on GitHub', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:msako/demo-app.git'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
   await writeFile(path.join(repo, 'feature.txt'), 'feature\n');
   execFileSync('git', ['add', 'feature.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'feat: add linked changelog entry'], { cwd: repo });
@@ -203,11 +204,16 @@ test('runRelease links each changelog entry to its commit on GitHub', async () =
     changelog,
     new RegExp(`- feat: add linked changelog entry \\(\\[${shortHash}\\]\\(https://github\\.com/msako/demo-app/commit/${hash}\\)\\)`),
   );
+  assert.match(
+    changelog,
+    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\) - 2026-05-29/,
+  );
 });
 
 test('runRelease links changelog entries for private GitLab-style remotes', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
   await writeFile(path.join(repo, 'feature.txt'), 'feature\n');
   execFileSync('git', ['add', 'feature.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'fix: link private gitlab commit'], { cwd: repo });
@@ -223,6 +229,10 @@ test('runRelease links changelog entries for private GitLab-style remotes', asyn
   assert.match(
     changelog,
     new RegExp(`- fix: link private gitlab commit \\(\\[${shortHash}\\]\\(https://gitlab\\.internal\\.example\\.com/platform/demo-app/-/commit/${hash}\\)\\)`),
+  );
+  assert.match(
+    changelog,
+    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\) - 2026-05-29/,
   );
 });
 
@@ -286,6 +296,60 @@ test('runRelease uses the nearest history tag, not the newest-created reachable 
   assert.match(changelog, /- fix: unreleased change/);
   assert.doesNotMatch(changelog, /feat: already released/);
   assert.doesNotMatch(changelog, /feat: initial app/);
+});
+
+test('runRelease fetches remote tags before choosing the changelog base', async () => {
+  const repo = await makeRepo();
+  const remote = await makeBareRepo();
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo });
+  await writeFile(path.join(repo, 'released.txt'), 'released\n');
+  execFileSync('git', ['add', 'released.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: already in remote tagged release'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.35.0'], { cwd: repo });
+  execFileSync('git', ['push', 'origin', 'main', '--tags'], { cwd: repo });
+  execFileSync('git', ['tag', '-d', 'v1.35.0'], { cwd: repo });
+  await writeFile(
+    path.join(repo, 'CHANGELOG.md'),
+    '# Changelog\n\n## [1.35.0](https://gitlab.ops/example/repo/compare/v1.34.0...v1.35.0) (2026-06-01)\n\n### Features\n\n* feat: already in remote tagged release\n',
+  );
+  await writeFile(path.join(repo, 'unreleased.txt'), 'unreleased\n');
+  execFileSync('git', ['add', 'CHANGELOG.md', 'unreleased.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: unreleased after remote tag'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-06-02T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  const latestEntry = changelog.split('## [1.35.0]')[0];
+  assert.match(latestEntry, /- fix: unreleased after remote tag/);
+  assert.doesNotMatch(latestEntry, /feat: already in remote tagged release/);
+});
+
+test('runRelease does not duplicate commits already present in an existing changelog', async () => {
+  const repo = await makeRepo();
+  await writeFile(path.join(repo, 'released.txt'), 'released\n');
+  execFileSync('git', ['add', 'released.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: already documented'], { cwd: repo });
+  const documentedHash = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  await writeFile(
+    path.join(repo, 'CHANGELOG.md'),
+    `# Changelog\n\n## [1.35.0](https://gitlab.ops/example/repo/compare/v1.34.0...v1.35.0) (2026-06-01)\n\n### Features\n\n* **site-map:** already documented ([${documentedHash.slice(0, 7)}](https://gitlab.ops/example/repo/-/commit/${documentedHash}))\n`,
+  );
+  await writeFile(path.join(repo, 'unreleased.txt'), 'unreleased\n');
+  execFileSync('git', ['add', 'CHANGELOG.md', 'unreleased.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: not yet documented'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-06-02T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  const latestEntry = changelog.split('## [1.35.0]')[0];
+  assert.match(latestEntry, /- fix: not yet documented/);
+  assert.doesNotMatch(latestEntry, /feat: already documented/);
 });
 
 test('runRelease rolls back its release commit when tag creation fails', async () => {
@@ -359,5 +423,11 @@ async function makeRepo({ packageLock = false } = {}) {
   }
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'feat: initial app'], { cwd: repo });
+  return repo;
+}
+
+async function makeBareRepo() {
+  const repo = await mkdtemp(path.join(tmpdir(), 'calver-bump-remote-'));
+  execFileSync('git', ['init', '--bare'], { cwd: repo });
   return repo;
 }

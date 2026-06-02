@@ -118,8 +118,6 @@ async function fileExists(filePath) {
 
 async function prependChangelog(cwd, version, date, options = {}) {
   const changelogPath = path.join(cwd, 'CHANGELOG.md');
-  const changes = await releaseNotes(cwd, options);
-  const entry = `## ${version} - ${isoDate(date)}\n\n${formatReleaseNotes(changes)}\n`;
   let existing = '';
 
   try {
@@ -127,6 +125,16 @@ async function prependChangelog(cwd, version, date, options = {}) {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
+
+  const notes = await releaseNotes(cwd, { ...options, existingChangelog: existing });
+  const heading = formatReleaseHeading({
+    version,
+    date,
+    previousTag: notes.previousTag,
+    tag: `${options.tagPrefix ?? ''}${version}`,
+    compareUrlBuilder: notes.compareUrlBuilder,
+  });
+  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes)}\n`;
 
   const body = existing.trim().startsWith('# Changelog')
     ? existing.replace(/^# Changelog\s*/, `# Changelog\n\n${entry}\n`)
@@ -136,19 +144,39 @@ async function prependChangelog(cwd, version, date, options = {}) {
 }
 
 async function releaseNotes(cwd, options = {}) {
+  await fetchTags(cwd, options.remote ?? 'origin');
   const latestTag = await latestReachableTag(cwd);
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
   const commits = await gitCommits(cwd, range);
-  const commitUrlBuilder = await commitUrlBuilderForOrigin(cwd);
+  const remoteUrl = await getRemoteUrl(cwd, options.remote ?? 'origin');
+  const commitUrlBuilder = remoteUrl ? buildCommitUrlBuilder(remoteUrl) : null;
+  const compareUrlBuilder = remoteUrl ? buildCompareUrlBuilder(remoteUrl) : null;
   const allowedTypes = options.types ?? ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
   const conventionalCommits = commits
     .filter((commit) => isConventionalCommit(commit.subject))
     .filter((commit) => allowedTypes.includes(conventionalType(commit.subject)))
+    .filter((commit) => !isCommitInChangelog(commit, options.existingChangelog ?? ''))
     .map((commit) => ({
       ...commit,
       url: commitUrlBuilder ? commitUrlBuilder(commit.hash) : null,
     }));
-  return conventionalCommits.length > 0 ? conventionalCommits : ['No conventional commits in this release.'];
+  return {
+    previousTag: latestTag,
+    compareUrlBuilder,
+    changes: conventionalCommits.length > 0 ? conventionalCommits : ['No conventional commits in this release.'],
+  };
+}
+
+function formatReleaseHeading({ version, date, previousTag, tag, compareUrlBuilder }) {
+  const label = previousTag && compareUrlBuilder
+    ? `[${version}](${compareUrlBuilder(previousTag, tag)})`
+    : version;
+  return `## ${label} - ${isoDate(date)}`;
+}
+
+function isCommitInChangelog(commit, changelog) {
+  if (!changelog) return false;
+  return changelog.includes(commit.hash) || changelog.includes(commit.hash.slice(0, 7));
 }
 
 function isConventionalCommit(subject) {
@@ -196,16 +224,16 @@ async function gitCommits(cwd, range) {
     });
 }
 
-async function commitUrlBuilderForOrigin(cwd) {
+async function getRemoteUrl(cwd, remote) {
   try {
-    const { stdout } = await git(cwd, ['remote', 'get-url', 'origin']);
-    return commitUrlBuilder(stdout.trim());
+    const { stdout } = await git(cwd, ['remote', 'get-url', remote]);
+    return stdout.trim();
   } catch {
     return null;
   }
 }
 
-function commitUrlBuilder(remote) {
+function buildCommitUrlBuilder(remote) {
   const parsed = parseGitRemote(remote);
   if (!parsed) {
     return null;
@@ -217,6 +245,23 @@ function commitUrlBuilder(remote) {
   }
   if (parsed.host.includes('gitlab')) {
     return (hash) => `${baseUrl}/-/commit/${hash}`;
+  }
+
+  return null;
+}
+
+function buildCompareUrlBuilder(remote) {
+  const parsed = parseGitRemote(remote);
+  if (!parsed) {
+    return null;
+  }
+
+  const baseUrl = `https://${parsed.host}/${parsed.repo}`;
+  if (parsed.host === 'github.com') {
+    return (from, to) => `${baseUrl}/compare/${from}...${to}`;
+  }
+  if (parsed.host.includes('gitlab')) {
+    return (from, to) => `${baseUrl}/-/compare/${from}...${to}`;
   }
 
   return null;
@@ -242,6 +287,15 @@ async function latestReachableTag(cwd) {
     return stdout.trim() || null;
   } catch {
     return null;
+  }
+}
+
+async function fetchTags(cwd, remote) {
+  try {
+    await git(cwd, ['remote', 'get-url', remote]);
+    await git(cwd, ['fetch', '--tags', remote]);
+  } catch {
+    // Local/offline repos can still release using tags already present.
   }
 }
 
