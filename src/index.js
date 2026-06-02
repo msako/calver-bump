@@ -237,15 +237,12 @@ function parseGitRemote(remote) {
 }
 
 async function latestReachableTag(cwd) {
-  const tags = await gitLines(cwd, [
-    'for-each-ref',
-    '--merged',
-    'HEAD',
-    '--sort=-creatordate',
-    '--format=%(refname:short)',
-    'refs/tags',
-  ]);
-  return tags[0] ?? null;
+  try {
+    const { stdout } = await git(cwd, ['describe', '--tags', '--abbrev=0']);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 async function currentBranch(cwd) {

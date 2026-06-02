@@ -104,7 +104,7 @@ test('runRelease updates package-lock.json when it exists', async () => {
   assert.equal(lock.packages[''].version, '26.0529');
 });
 
-test('runRelease uses the latest reachable tag as the changelog base', async () => {
+test('runRelease uses the nearest reachable tag as the changelog base', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['tag', '26.0528.1'], { cwd: repo });
   await writeFile(path.join(repo, 'feature-a.txt'), 'a\n');
@@ -122,7 +122,7 @@ test('runRelease uses the latest reachable tag as the changelog base', async () 
 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(changelog, /- fix: after non-release tag/);
-  assert.match(changelog, /- feat: after calver tag/);
+  assert.doesNotMatch(changelog, /- feat: after calver tag/);
   assert.doesNotMatch(changelog, /- feat: initial app/);
 });
 
@@ -263,6 +263,29 @@ test('runRelease uses the latest reachable tag as the changelog base even when i
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(changelog, /- fix: after legacy version tag/);
   assert.doesNotMatch(changelog, /- feat: initial app/);
+});
+
+test('runRelease uses the nearest history tag, not the newest-created reachable tag, as the changelog base', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['tag', 'old-tag'], { cwd: repo });
+  await writeFile(path.join(repo, 'first.txt'), 'first\n');
+  execFileSync('git', ['add', 'first.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: already released'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.35.0'], { cwd: repo });
+  execFileSync('git', ['tag', '-f', 'newer-created-old-tag', 'old-tag'], { cwd: repo });
+  await writeFile(path.join(repo, 'second.txt'), 'second\n');
+  execFileSync('git', ['add', 'second.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: unreleased change'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(changelog, /- fix: unreleased change/);
+  assert.doesNotMatch(changelog, /feat: already released/);
+  assert.doesNotMatch(changelog, /feat: initial app/);
 });
 
 test('runRelease rolls back its release commit when tag creation fails', async () => {
