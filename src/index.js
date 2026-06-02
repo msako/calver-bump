@@ -152,7 +152,7 @@ async function releaseNotes(cwd, options = {}) {
   const compareUrlBuilder = remoteUrl ? buildCompareUrlBuilder(remoteUrl) : null;
   const requestUrlBuilder = remoteUrl ? buildRequestUrlBuilder(remoteUrl) : null;
   const allowedTypes = options.types ?? ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
-  const conventionalCommits = commits
+  const conventionalCommits = dedupeConventionalChanges(commits
     .map((commit) => ({ ...commit, subject: conventionalSubjectForCommit(commit) ?? commit.subject }))
     .filter((commit) => isConventionalCommit(commit.subject))
     .filter((commit) => allowedTypes.includes(conventionalType(commit.subject)))
@@ -161,7 +161,7 @@ async function releaseNotes(cwd, options = {}) {
       ...commit,
       request: requestForCommit(commit, requestUrlBuilder),
       url: commitUrlBuilder ? commitUrlBuilder(commit.hash) : null,
-    }));
+    })));
   const requests = uniqueRequests(commits.map((commit) => requestForCommit(commit, requestUrlBuilder)).filter(Boolean));
   return {
     previousTag: latestTag,
@@ -195,6 +195,21 @@ function commitLines(commit) {
   return [commit.subject, ...(commit.body ?? '').split('\n')]
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function dedupeConventionalChanges(changes) {
+  const deduped = [];
+  for (const change of changes) {
+    const existingIndex = deduped.findIndex((candidate) => candidate.subject === change.subject);
+    if (existingIndex < 0) {
+      deduped.push(change);
+      continue;
+    }
+    if (!deduped[existingIndex].request && change.request) {
+      deduped[existingIndex] = change;
+    }
+  }
+  return deduped;
 }
 
 function formatReleaseNotes(changes) {

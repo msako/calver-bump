@@ -303,6 +303,40 @@ test('runRelease links changelog entries to GitLab merge requests and dedupes th
   );
 });
 
+test('runRelease prefers merge request entries over duplicate commit hash entries', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
+  await writeFile(path.join(repo, 'raw-fix.txt'), 'raw\n');
+  execFileSync('git', ['add', 'raw-fix.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix(review): block rule-listed reviewers'], { cwd: repo });
+  const rawHash = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  await writeFile(path.join(repo, 'merge-fix.txt'), 'merge\n');
+  execFileSync('git', ['add', 'merge-fix.txt'], { cwd: repo });
+  execFileSync('git', [
+    'commit',
+    '-m',
+    'Merge branch feature/review into main',
+    '-m',
+    'fix(review): block rule-listed reviewers',
+    '-m',
+    'See merge request platform/demo-app!77',
+  ], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  const fixes = changelog.match(/### Fixes\n\n(?<body>[\s\S]*?)(?:\n\n###|\n?$)/)?.groups.body ?? '';
+  assert.match(
+    fixes,
+    /- fix\(review\): block rule-listed reviewers \(\[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\)\)/,
+  );
+  assert.doesNotMatch(fixes, new RegExp(rawHash.slice(0, 7)));
+});
+
 test('runRelease prepends only commits since the previous CalVer tag on later releases', async () => {
   const repo = await makeRepo();
   await runRelease({
