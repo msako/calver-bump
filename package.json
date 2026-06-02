@@ -1,6 +1,6 @@
 {
   "name": "calver-bump",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Release CLI for internal applications using readable CalVer versions.",
   "main": "src/index.js",
   "bin": {
