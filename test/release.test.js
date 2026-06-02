@@ -16,16 +16,38 @@ test('planRelease reports version, changelog, commit, and tag actions without wr
     dryRun: true,
   });
 
-  assert.equal(plan.version, '2026.05.29.1');
+  assert.equal(plan.version, '26.0529.1');
   assert.deepEqual(plan.actions, [
-    'update package.json version to 2026.05.29.1',
-    'prepend CHANGELOG.md entry for 2026.05.29.1',
-    'create git commit chore(release): 2026.05.29.1',
-    'create git tag 2026.05.29.1',
+    'update package.json version to 26.0529.1',
+    'prepend CHANGELOG.md entry for 26.0529.1',
+    'create git commit chore(release): 26.0529.1',
+    'create git tag 26.0529.1',
   ]);
 
   const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
   assert.equal(pkg.version, '0.0.0');
+});
+
+test('runRelease supports tag prefixes without changing package.json version', async () => {
+  const repo = await makeRepo();
+
+  const result = await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    tagPrefix: 'v',
+  });
+
+  assert.equal(result.version, '26.0529.1');
+  assert.equal(result.tag, 'v26.0529.1');
+
+  const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
+  assert.equal(pkg.version, '26.0529.1');
+
+  const tag = execFileSync('git', ['tag', '--list', 'v26.0529.1'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.equal(tag, 'v26.0529.1');
 });
 
 test('runRelease updates package.json, prepends changelog, commits, and tags', async () => {
@@ -36,25 +58,25 @@ test('runRelease updates package.json, prepends changelog, commits, and tags', a
     date: new Date('2026-05-29T12:00:00-07:00'),
   });
 
-  assert.equal(result.version, '2026.05.29.1');
+  assert.equal(result.version, '26.0529.1');
 
   const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
-  assert.equal(pkg.version, '2026.05.29.1');
+  assert.equal(pkg.version, '26.0529.1');
 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
-  assert.match(changelog, /^# Changelog\n\n## 2026\.05\.29\.1 - 2026-05-29\n\n### Features\n\n- feat: initial app/);
+  assert.match(changelog, /^# Changelog\n\n## 26\.0529\.1 - 2026-05-29\n\n### Features\n\n- feat: initial app/);
 
-  const tag = execFileSync('git', ['tag', '--list', '2026.05.29.1'], {
+  const tag = execFileSync('git', ['tag', '--list', '26.0529.1'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.equal(tag, '2026.05.29.1');
+  assert.equal(tag, '26.0529.1');
 
   const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.equal(subject, 'chore(release): 2026.05.29.1');
+  assert.equal(subject, 'chore(release): 26.0529.1');
 });
 
 test('runRelease returns the current branch for push guidance', async () => {
@@ -78,13 +100,13 @@ test('runRelease updates package-lock.json when it exists', async () => {
   });
 
   const lock = JSON.parse(await readFile(path.join(repo, 'package-lock.json'), 'utf8'));
-  assert.equal(lock.version, '2026.05.29.1');
-  assert.equal(lock.packages[''].version, '2026.05.29.1');
+  assert.equal(lock.version, '26.0529.1');
+  assert.equal(lock.packages[''].version, '26.0529.1');
 });
 
 test('runRelease uses the latest reachable tag as the changelog base', async () => {
   const repo = await makeRepo();
-  execFileSync('git', ['tag', '2026.05.28.1'], { cwd: repo });
+  execFileSync('git', ['tag', '26.0528.1'], { cwd: repo });
   await writeFile(path.join(repo, 'feature-a.txt'), 'a\n');
   execFileSync('git', ['add', 'feature-a.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'feat: after calver tag'], { cwd: repo });
@@ -124,6 +146,23 @@ test('runRelease includes only conventional commits in the changelog', async () 
   assert.doesNotMatch(changelog, /update docs manually/);
 });
 
+test('runRelease filters changelog entries by configured conventional commit types', async () => {
+  const repo = await makeRepo();
+  await writeFile(path.join(repo, 'fix.txt'), 'fix\n');
+  execFileSync('git', ['add', 'fix.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: excluded by type filter'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    types: ['feat'],
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(changelog, /- feat: initial app/);
+  assert.doesNotMatch(changelog, /fix: excluded by type filter/);
+});
+
 test('runRelease groups changelog entries by conventional commit type', async () => {
   const repo = await makeRepo();
   await writeFile(path.join(repo, 'fix.txt'), 'fix\n');
@@ -141,7 +180,7 @@ test('runRelease groups changelog entries by conventional commit type', async ()
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    /## 2026\.05\.29\.1 - 2026-05-29\n\n### Features\n\n- feat: add release grouping \([a-f0-9]{7}\)\n- feat: initial app \([a-f0-9]{7}\)\n\n### Fixes\n\n- fix\(auth\): repair token refresh \([a-f0-9]{7}\)/,
+    /## 26\.0529\.1 - 2026-05-29\n\n### Features\n\n- feat: add release grouping \([a-f0-9]{7}\)\n- feat: initial app \([a-f0-9]{7}\)\n\n### Fixes\n\n- fix\(auth\): repair token refresh \([a-f0-9]{7}\)/,
   );
 });
 
@@ -203,8 +242,8 @@ test('runRelease prepends only commits since the previous CalVer tag on later re
   });
 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
-  const latestEntry = changelog.split('## 2026.05.29.1 - 2026-05-29')[0];
-  assert.match(latestEntry, /## 2026\.05\.29\.2 - 2026-05-29/);
+  const latestEntry = changelog.split('## 26.0529.1 - 2026-05-29')[0];
+  assert.match(latestEntry, /## 26\.0529\.2 - 2026-05-29/);
   assert.match(latestEntry, /- fix: second release only/);
   assert.doesNotMatch(latestEntry, /feat: initial app/);
 });
@@ -228,7 +267,7 @@ test('runRelease uses the latest reachable tag as the changelog base even when i
 
 test('runRelease rolls back its release commit when tag creation fails', async () => {
   const repo = await makeRepo();
-  execFileSync('git', ['tag', '2026.05.29.1'], { cwd: repo });
+  execFileSync('git', ['tag', '26.0529.1'], { cwd: repo });
   const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
 
   await assert.rejects(
@@ -242,6 +281,30 @@ test('runRelease rolls back its release commit when tag creation fails', async (
 
   const after = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   assert.equal(after, before);
+});
+
+test('runRelease can skip commit and tag creation', async () => {
+  const repo = await makeRepo();
+
+  const result = await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    skipCommit: true,
+  });
+
+  assert.equal(result.tag, null);
+  const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.equal(subject, 'feat: initial app');
+
+  const status = execFileSync('git', ['status', '--porcelain'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.match(status, /M package\.json/);
+  assert.match(status, /\?\? CHANGELOG\.md/);
 });
 
 async function makeRepo({ packageLock = false } = {}) {

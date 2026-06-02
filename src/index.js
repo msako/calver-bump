@@ -13,13 +13,16 @@ export async function planRelease(options = {}) {
   const version = nextCalVer({
     date: options.date,
     existingTags,
-    format: options.format ?? 'dotted',
+    format: options.format ?? 'short',
   });
+  const tag = `${options.tagPrefix ?? ''}${version}`;
 
   return {
     version,
+    tag,
     branch: await currentBranch(cwd),
-    actions: releaseActions(version),
+    remote: options.remote ?? 'origin',
+    actions: releaseActions({ version, tag, skipCommit: options.skipCommit }),
   };
 }
 
@@ -34,26 +37,34 @@ export async function runRelease(options = {}) {
   await assertCleanWorktree(cwd);
   await updatePackageVersion(cwd, plan.version);
   await updatePackageLock(cwd, plan.version);
-  await prependChangelog(cwd, plan.version, options.date ?? new Date());
+  await prependChangelog(cwd, plan.version, options.date ?? new Date(), options);
+
+  if (options.skipCommit) {
+    return { ...plan, tag: null };
+  }
+
   await git(cwd, ['add', ...await releaseFiles(cwd)]);
   await git(cwd, ['commit', '-m', `chore(release): ${plan.version}`]);
   try {
-    await git(cwd, ['tag', plan.version]);
+    await git(cwd, ['tag', '-a', plan.tag, '-m', `Release ${plan.version}`]);
   } catch (error) {
     await git(cwd, ['reset', '--hard', 'HEAD~1']);
-    throw new Error(`Failed to create git tag ${plan.version}; rolled back release commit. ${error.message}`);
+    throw new Error(`Failed to create git tag ${plan.tag}; rolled back release commit. ${error.message}`);
   }
 
   return plan;
 }
 
-function releaseActions(version) {
-  return [
+function releaseActions({ version, tag, skipCommit = false }) {
+  const actions = [
     `update package.json version to ${version}`,
     `prepend CHANGELOG.md entry for ${version}`,
-    `create git commit chore(release): ${version}`,
-    `create git tag ${version}`,
   ];
+  if (!skipCommit) {
+    actions.push(`create git commit chore(release): ${version}`);
+    actions.push(`create git tag ${tag}`);
+  }
+  return actions;
 }
 
 async function updatePackageVersion(cwd, version) {
@@ -105,9 +116,9 @@ async function fileExists(filePath) {
   }
 }
 
-async function prependChangelog(cwd, version, date) {
+async function prependChangelog(cwd, version, date, options = {}) {
   const changelogPath = path.join(cwd, 'CHANGELOG.md');
-  const changes = await releaseNotes(cwd);
+  const changes = await releaseNotes(cwd, options);
   const entry = `## ${version} - ${isoDate(date)}\n\n${formatReleaseNotes(changes)}\n`;
   let existing = '';
 
@@ -124,13 +135,15 @@ async function prependChangelog(cwd, version, date) {
   await writeFile(changelogPath, body);
 }
 
-async function releaseNotes(cwd) {
+async function releaseNotes(cwd, options = {}) {
   const latestTag = await latestReachableTag(cwd);
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
   const commits = await gitCommits(cwd, range);
   const commitUrlBuilder = await commitUrlBuilderForOrigin(cwd);
+  const allowedTypes = options.types ?? ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
   const conventionalCommits = commits
     .filter((commit) => isConventionalCommit(commit.subject))
+    .filter((commit) => allowedTypes.includes(conventionalType(commit.subject)))
     .map((commit) => ({
       ...commit,
       url: commitUrlBuilder ? commitUrlBuilder(commit.hash) : null,
