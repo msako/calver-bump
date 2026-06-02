@@ -3,7 +3,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { isoDate, nextCalVer } from './calver.js';
+import { nextCalVer } from './calver.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -129,12 +129,11 @@ async function prependChangelog(cwd, version, date, options = {}) {
   const notes = await releaseNotes(cwd, { ...options, existingChangelog: existing });
   const heading = formatReleaseHeading({
     version,
-    date,
     previousTag: notes.previousTag,
     tag: `${options.tagPrefix ?? ''}${version}`,
     compareUrlBuilder: notes.compareUrlBuilder,
   });
-  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes)}\n`;
+  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes)}${formatFullChangelog(notes.requests)}\n`;
 
   const body = existing.trim().startsWith('# Changelog')
     ? existing.replace(/^# Changelog\s*/, `# Changelog\n\n${entry}\n`)
@@ -145,12 +144,13 @@ async function prependChangelog(cwd, version, date, options = {}) {
 
 async function releaseNotes(cwd, options = {}) {
   await fetchTags(cwd, options.remote ?? 'origin');
-  const latestTag = await latestReachableTag(cwd);
+  const latestTag = await latestReleaseTag(cwd, options.existingChangelog ?? '');
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
   const commits = await gitCommits(cwd, range);
   const remoteUrl = await getRemoteUrl(cwd, options.remote ?? 'origin');
   const commitUrlBuilder = remoteUrl ? buildCommitUrlBuilder(remoteUrl) : null;
   const compareUrlBuilder = remoteUrl ? buildCompareUrlBuilder(remoteUrl) : null;
+  const requestUrlBuilder = remoteUrl ? buildRequestUrlBuilder(remoteUrl) : null;
   const allowedTypes = options.types ?? ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
   const conventionalCommits = commits
     .filter((commit) => isConventionalCommit(commit.subject))
@@ -158,20 +158,23 @@ async function releaseNotes(cwd, options = {}) {
     .filter((commit) => !isCommitInChangelog(commit, options.existingChangelog ?? ''))
     .map((commit) => ({
       ...commit,
+      request: requestForCommit(commit, requestUrlBuilder),
       url: commitUrlBuilder ? commitUrlBuilder(commit.hash) : null,
     }));
+  const requests = uniqueRequests(commits.map((commit) => requestForCommit(commit, requestUrlBuilder)).filter(Boolean));
   return {
     previousTag: latestTag,
     compareUrlBuilder,
     changes: conventionalCommits.length > 0 ? conventionalCommits : ['No conventional commits in this release.'],
+    requests,
   };
 }
 
-function formatReleaseHeading({ version, date, previousTag, tag, compareUrlBuilder }) {
+function formatReleaseHeading({ version, previousTag, tag, compareUrlBuilder }) {
   const label = previousTag && compareUrlBuilder
     ? `[${version}](${compareUrlBuilder(previousTag, tag)})`
     : version;
-  return `## ${label} - ${isoDate(date)}`;
+  return `## ${label}`;
 }
 
 function isCommitInChangelog(commit, changelog) {
@@ -203,24 +206,41 @@ function formatReleaseNotes(changes) {
     .join('\n\n');
 }
 
+function formatFullChangelog(requests) {
+  if (requests.length === 0) {
+    return '';
+  }
+  return `\n\n### Full Changelog\n\n${requests.map((request) => `- ${formatRequestEntry(request)}`).join('\n')}`;
+}
+
 function conventionalType(subject) {
   return /^(?<type>[a-z]+)(\([^)]+\))?!?: .+/.exec(subject)?.groups.type;
 }
 
 function formatCommitEntry(commit) {
   const shortHash = commit.hash.slice(0, 7);
-  const suffix = commit.url ? ` ([${shortHash}](${commit.url}))` : ` (${shortHash})`;
+  const suffix = commit.request
+    ? ` (${formatRequestLink(commit.request)})`
+    : commit.url ? ` ([${shortHash}](${commit.url}))` : ` (${shortHash})`;
   return `${commit.subject}${suffix}`;
 }
 
+function formatRequestLink(request) {
+  return request.url ? `[${request.label}](${request.url})` : request.label;
+}
+
+function formatRequestEntry(request) {
+  return request.title ? `${formatRequestLink(request)} ${request.title}` : formatRequestLink(request);
+}
+
 async function gitCommits(cwd, range) {
-  const { stdout } = await git(cwd, ['log', '--pretty=format:%H%x00%s', ...range]);
+  const { stdout } = await git(cwd, ['log', '--pretty=format:%H%x00%s%x00%B%x1e', ...range]);
   return stdout
-    .split('\n')
+    .split('\x1e')
     .filter(Boolean)
-    .map((line) => {
-      const [hash, subject] = line.split('\0');
-      return { hash, subject };
+    .map((record) => {
+      const [hash, subject, body = ''] = record.replace(/^\n+|\n+$/g, '').split('\0');
+      return { hash, subject, body };
     });
 }
 
@@ -267,6 +287,78 @@ function buildCompareUrlBuilder(remote) {
   return null;
 }
 
+function buildRequestUrlBuilder(remote) {
+  const parsed = parseGitRemote(remote);
+  if (!parsed) {
+    return null;
+  }
+
+  const baseUrl = `https://${parsed.host}/${parsed.repo}`;
+  if (parsed.host === 'github.com') {
+    return (request) => request.provider === 'github' ? `${baseUrl}/pull/${request.number}` : null;
+  }
+  if (parsed.host.includes('gitlab')) {
+    return (request) => request.provider === 'gitlab' ? `${baseUrl}/-/merge_requests/${request.number}` : null;
+  }
+
+  return null;
+}
+
+function requestForCommit(commit, requestUrlBuilder) {
+  const request = parseRequestReference(`${commit.subject}\n${commit.body ?? ''}`);
+  if (!request) {
+    return null;
+  }
+  return {
+    ...request,
+    title: requestTitleForCommit(commit),
+    url: requestUrlBuilder ? requestUrlBuilder(request) : null,
+  };
+}
+
+function requestTitleForCommit(commit) {
+  if (isConventionalCommit(commit.subject)) {
+    return commit.subject;
+  }
+
+  return (commit.body ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line && !parseRequestReference(line) && !/^Merge\b/i.test(line)) ?? null;
+}
+
+function parseRequestReference(message) {
+  const gitlabMerge = /(?:^|\s)(?:See merge request\s+\S+!|!)(?<number>\d+)(?=\D|$)/i.exec(message);
+  if (gitlabMerge) {
+    return { provider: 'gitlab', number: gitlabMerge.groups.number, label: `!${gitlabMerge.groups.number}` };
+  }
+
+  const githubPull = /(?:Merge pull request\s+#|#)(?<number>\d+)(?=\D|$)/i.exec(message);
+  if (githubPull) {
+    return { provider: 'github', number: githubPull.groups.number, label: `#${githubPull.groups.number}` };
+  }
+
+  return null;
+}
+
+function uniqueRequests(requests) {
+  const seen = new Set();
+  const unique = [];
+  for (const request of requests) {
+    const key = `${request.provider}:${request.number}`;
+    if (seen.has(key)) {
+      const existing = unique.find((candidate) => `${candidate.provider}:${candidate.number}` === key);
+      if (existing && !existing.title && request.title) {
+        existing.title = request.title;
+      }
+      continue;
+    }
+    seen.add(key);
+    unique.push(request);
+  }
+  return unique;
+}
+
 function parseGitRemote(remote) {
   const sshMatch = /^git@(?<host>[^:]+):(?<repo>.+?)(?:\.git)?$/.exec(remote);
   if (sshMatch) {
@@ -279,6 +371,28 @@ function parseGitRemote(remote) {
   }
 
   return null;
+}
+
+async function latestReleaseTag(cwd, changelog) {
+  const changelogTag = latestChangelogCompareTarget(changelog);
+  if (changelogTag && await tagExists(cwd, changelogTag)) {
+    return changelogTag;
+  }
+  return latestReachableTag(cwd);
+}
+
+function latestChangelogCompareTarget(changelog) {
+  const match = /^## \[[^\]]+\]\([^)]*\/(?:-\/)?compare\/[^)]*?\.{3}(?<tag>[^)\s]+)\)/m.exec(changelog);
+  return match?.groups.tag ?? null;
+}
+
+async function tagExists(cwd, tag) {
+  try {
+    await git(cwd, ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}^{}`]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function latestReachableTag(cwd) {

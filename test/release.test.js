@@ -64,7 +64,7 @@ test('runRelease updates package.json, prepends changelog, commits, and tags', a
   assert.equal(pkg.version, '26.0529');
 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
-  assert.match(changelog, /^# Changelog\n\n## 26\.0529 - 2026-05-29\n\n### Features\n\n- feat: initial app/);
+  assert.match(changelog, /^# Changelog\n\n## 26\.0529\n\n### Features\n\n- feat: initial app/);
 
   const tag = execFileSync('git', ['tag', '--list', '26.0529'], {
     cwd: repo,
@@ -180,7 +180,7 @@ test('runRelease groups changelog entries by conventional commit type', async ()
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    /## 26\.0529 - 2026-05-29\n\n### Features\n\n- feat: add release grouping \([a-f0-9]{7}\)\n- feat: initial app \([a-f0-9]{7}\)\n\n### Fixes\n\n- fix\(auth\): repair token refresh \([a-f0-9]{7}\)/,
+    /## 26\.0529\n\n### Features\n\n- feat: add release grouping \([a-f0-9]{7}\)\n- feat: initial app \([a-f0-9]{7}\)\n\n### Fixes\n\n- fix\(auth\): repair token refresh \([a-f0-9]{7}\)/,
   );
 });
 
@@ -206,7 +206,7 @@ test('runRelease links each changelog entry to its commit on GitHub', async () =
   );
   assert.match(
     changelog,
-    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\) - 2026-05-29/,
+    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
   );
 });
 
@@ -232,7 +232,72 @@ test('runRelease links changelog entries for private GitLab-style remotes', asyn
   );
   assert.match(
     changelog,
-    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\) - 2026-05-29/,
+    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+  );
+});
+
+test('runRelease links changelog entries to GitHub pull requests when commit subjects include PR numbers', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:msako/demo-app.git'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
+  await writeFile(path.join(repo, 'feature.txt'), 'feature\n');
+  execFileSync('git', ['add', 'feature.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: add pull request links (#42)'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(
+    changelog,
+    /- feat: add pull request links \(#42\) \(\[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\)\)/,
+  );
+  assert.match(
+    changelog,
+    /### Full Changelog\n\n- \[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\) feat: add pull request links \(#42\)/,
+  );
+});
+
+test('runRelease links changelog entries to GitLab merge requests and dedupes the full changelog', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
+  await writeFile(path.join(repo, 'fix.txt'), 'fix\n');
+  execFileSync('git', ['add', 'fix.txt'], { cwd: repo });
+  execFileSync('git', [
+    'commit',
+    '-m',
+    'fix(review): block rule-listed reviewers',
+    '-m',
+    'See merge request platform/demo-app!77',
+  ], { cwd: repo });
+  await writeFile(path.join(repo, 'merge.txt'), 'merge\n');
+  execFileSync('git', ['add', 'merge.txt'], { cwd: repo });
+  execFileSync('git', [
+    'commit',
+    '-m',
+    'Merge branch feature/review into main',
+    '-m',
+    'See merge request platform/demo-app!77',
+  ], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(
+    changelog,
+    /- fix\(review\): block rule-listed reviewers \(\[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\)\)/,
+  );
+  const fullChangelogEntries = changelog.match(/\[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\)/g) ?? [];
+  assert.equal(fullChangelogEntries.length, 2);
+  assert.match(
+    changelog,
+    /### Full Changelog\n\n- \[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\) fix\(review\): block rule-listed reviewers/,
   );
 });
 
@@ -252,8 +317,8 @@ test('runRelease prepends only commits since the previous CalVer tag on later re
   });
 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
-  const latestEntry = changelog.split('## 26.0529 - 2026-05-29')[0];
-  assert.match(latestEntry, /## 26\.0529\.1 - 2026-05-29/);
+  const latestEntry = changelog.split('\n## 26.0529\n')[0];
+  assert.match(latestEntry, /## 26\.0529\.1/);
   assert.match(latestEntry, /- fix: second release only/);
   assert.doesNotMatch(latestEntry, /feat: initial app/);
 });
@@ -350,6 +415,40 @@ test('runRelease does not duplicate commits already present in an existing chang
   const latestEntry = changelog.split('## [1.35.0]')[0];
   assert.match(latestEntry, /- fix: not yet documented/);
   assert.doesNotMatch(latestEntry, /feat: already documented/);
+});
+
+test('runRelease uses the previous changelog compare target for the new compare link', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.ops:pss/d2pass/d2p_next.git'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.34.0'], { cwd: repo });
+  await writeFile(path.join(repo, 'released.txt'), 'released\n');
+  execFileSync('git', ['add', 'released.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: already documented release'], { cwd: repo });
+  const releaseHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  await writeFile(
+    path.join(repo, 'CHANGELOG.md'),
+    '# Changelog\n\n## [1.35.0](https://gitlab.ops/pss/d2pass/d2p_next/compare/v1.34.0...v1.35.0) (2026-06-01)\n\n### Features\n\n* **site-map:** already documented release\n',
+  );
+  await writeFile(path.join(repo, 'unreleased.txt'), 'unreleased\n');
+  execFileSync('git', ['add', 'CHANGELOG.md', 'unreleased.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: new release change'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.35.0', releaseHead], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-06-02T12:00:00-07:00'),
+    tagPrefix: 'v',
+    types: ['feat', 'fix'],
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(
+    changelog,
+    /^# Changelog\n\n## \[26\.0602\]\(https:\/\/gitlab\.ops\/pss\/d2pass\/d2p_next\/-\/compare\/v1\.35\.0\.\.\.v26\.0602\)/,
+  );
+  const latestEntry = changelog.split('## [1.35.0]')[0];
+  assert.match(latestEntry, /- fix: new release change/);
+  assert.doesNotMatch(latestEntry, /feat: already documented release/);
 });
 
 test('runRelease rolls back its release commit when tag creation fails', async () => {

@@ -94,11 +94,14 @@ Project defaults can be stored in `.calverbumprc.json`:
 - The default `short` format is `YY.MMDD` for the first release of the day, then `YY.MMDD.1`, `YY.MMDD.2`, etc.
 - The optional `compact` format is `YYMMDD` for the first release of the day, then `YYMMDD.1`, `YYMMDD.2`, etc.
 - The optional `long` format is `YYYY.MM.DD` for the first release of the day, then `YYYY.MM.DD.1`, `YYYY.MM.DD.2`, etc.
+- Changelog release headings use the CalVer version only and do not append a separate `YYYY-MM-DD` date.
 - Existing `v`-prefixed tags are considered when calculating the next sequence number.
 - Changelog ranges start from the nearest reachable tag, even when it is not a CalVer tag.
 - Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.
 - Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes`.
-- Changelog entries link to their commit hash for GitHub and GitLab-style `origin` remotes.
+- Changelog entries link to GitHub pull requests or GitLab merge requests when the local git message includes references such as `#123`, `Merge pull request #123`, `!123`, or `See merge request group/project!123`.
+- Changelog entries fall back to commit hash links for GitHub and GitLab-style remotes when no pull/merge request reference is found.
+- Release entries include a `Full Changelog` section with a deduped list of pull/merge requests found in the release range, including the local commit title when available.
 - Later releases prepend only commits since the previous nearest reachable tag.
 - Release tags are annotated so `git push --follow-tags <remote> <branch>` pushes them.
 - The working tree must be clean before creating a real release.
