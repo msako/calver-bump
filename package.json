@@ -2,6 +2,10 @@
   "name": "calver-bump",
   "version": "0.1.7",
   "description": "Release CLI for internal applications using readable CalVer versions.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/msako/calver-bump.git"
+  },
   "main": "src/index.js",
   "bin": {
     "calver-bump": "bin/calver-bump.js"
