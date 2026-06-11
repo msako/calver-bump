@@ -154,6 +154,7 @@ async function makeRepo() {
   execFileSync('git', ['init'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo });
+  execFileSync('git', ['checkout', '-b', 'main'], { cwd: repo });
   await writeFile(
     path.join(repo, 'package.json'),
     `${JSON.stringify({ name: 'demo-app', version: '0.0.0' }, null, 2)}\n`,
