@@ -6,10 +6,19 @@
     "type": "git",
     "url": "https://github.com/msako/calver-bump.git"
   },
+  "homepage": "https://github.com/msako/calver-bump#readme",
+  "bugs": {
+    "url": "https://github.com/msako/calver-bump/issues"
+  },
   "main": "src/index.js",
   "bin": {
     "calver-bump": "bin/calver-bump.js"
   },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "test": "node --test"
   },

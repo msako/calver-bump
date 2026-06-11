@@ -15,6 +15,67 @@ test('CLI rejects invalid release formats', () => {
   assert.match(result.stderr, /Invalid format/);
 });
 
+test('CLI prints help', () => {
+  const result = spawnSync(process.execPath, ['bin/calver-bump.js', '--help'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /Usage: calver-bump/);
+  assert.match(result.stdout, /--version-only/);
+});
+
+test('CLI rejects unknown options', () => {
+  const result = spawnSync(process.execPath, ['bin/calver-bump.js', '--tagprefix', 'v'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unknown option --tagprefix/);
+});
+
+test('CLI rejects conflicting write modes', () => {
+  const result = spawnSync(process.execPath, ['bin/calver-bump.js', '--version-only', '--changelog-only'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /cannot be combined/);
+});
+
+test('CLI dry-run output includes release audit details', async () => {
+  const repo = await makeRepo();
+  const cliPath = path.resolve('bin/calver-bump.js');
+
+  const result = spawnSync(process.execPath, [cliPath, '--dry-run', '--no-fetch'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Changelog range: HEAD/);
+  assert.match(result.stdout, /Files: package\.json/);
+  assert.match(result.stdout, /Tag fetch: skipped/);
+  assert.match(result.stdout, /Planned actions:/);
+});
+
+test('CLI does not print push guidance for version-only releases', async () => {
+  const repo = await makeRepo();
+  const cliPath = path.resolve('bin/calver-bump.js');
+
+  const result = spawnSync(process.execPath, [cliPath, '--version-only', '--push'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Git tag: \(not created\)/);
+  assert.doesNotMatch(result.stdout, /git push --follow-tags/);
+});
+
 test('CLI explains how to push the release commit and tag after a real release', async () => {
   const repo = await makeRepo();
   const cliPath = path.resolve('bin/calver-bump.js');

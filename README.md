@@ -18,9 +18,10 @@ Example:
 
 1. Bumps `package.json` to the next CalVer version.
 2. Updates `package-lock.json` or `npm-shrinkwrap.json` when present.
-3. Creates or prepends a `CHANGELOG.md` entry from conventional commits since the nearest reachable tag.
-4. Creates a release commit.
-5. Creates an annotated git tag.
+3. Warns when `pnpm-lock.yaml` or `yarn.lock` is present, because those lockfiles do not store the root package version consistently.
+4. Creates or prepends a `CHANGELOG.md` entry from conventional commits since the nearest reachable tag.
+5. Creates a release commit.
+6. Creates an annotated git tag.
 
 ## Usage
 
@@ -32,6 +33,18 @@ Preview the planned release without writing files:
 
 ```bash
 npx calver-bump --dry-run
+```
+
+Print help:
+
+```bash
+npx calver-bump --help
+```
+
+Print the installed `calver-bump` package version:
+
+```bash
+npx calver-bump --version
 ```
 
 Use compact CalVer instead:
@@ -70,6 +83,30 @@ Only include selected conventional commit types:
 npx calver-bump --types feat,fix,perf
 ```
 
+Use an explicit changelog base tag:
+
+```bash
+npx calver-bump --from v1.35.0
+```
+
+Use local tags only without fetching from the configured remote:
+
+```bash
+npx calver-bump --no-fetch
+```
+
+Update only `package.json` and supported npm lockfiles:
+
+```bash
+npx calver-bump --version-only
+```
+
+Update only `CHANGELOG.md`:
+
+```bash
+npx calver-bump --changelog-only
+```
+
 Update files without creating a release commit or tag:
 
 ```bash
@@ -85,7 +122,11 @@ Project defaults can be stored in `.calverbumprc.json`:
   "format": "short",
   "tagPrefix": "v",
   "remote": "origin",
-  "types": ["feat", "fix", "perf"]
+  "types": ["feat", "fix", "perf"],
+  "changelogSections": {
+    "perf": "Performance",
+    "security": "Security"
+  }
 }
 ```
 
@@ -98,11 +139,12 @@ Project defaults can be stored in `.calverbumprc.json`:
 - Existing `v`-prefixed tags are considered when calculating the next sequence number.
 - Changelog ranges start from the nearest reachable tag, even when it is not a CalVer tag.
 - Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.
-- Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes`.
+- Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes` by default. Use `changelogSections` to assign additional conventional commit types to named sections.
 - Changelog entries link to GitHub pull requests or GitLab merge requests when the local git message includes references such as `#123`, `Merge pull request #123`, `!123`, or `See merge request group/project!123`.
 - Changelog entries fall back to commit hash links for GitHub and GitLab-style remotes when no pull/merge request reference is found.
 - Release entries include a `Full Changelog` section with a deduped list of pull/merge requests found in the release range, including the local commit title when available.
 - Later releases prepend only commits since the previous nearest reachable tag.
 - Release tags are annotated so `git push --follow-tags <remote> <branch>` pushes them.
 - The working tree must be clean before creating a real release.
-- If tag creation fails after the release commit, the CLI rolls back its own release commit.
+- Existing release tags are rejected before files are written.
+- If tag creation fails after the release commit, the CLI undoes its own commit and leaves the file changes in the working tree for inspection or recovery.

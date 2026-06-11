@@ -6,6 +6,11 @@ import { promisify } from 'node:util';
 import { nextCalVer } from './calver.js';
 
 const execFile = promisify(execFileCallback);
+const DEFAULT_TYPES = ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
+const DEFAULT_CHANGELOG_SECTIONS = {
+  feat: 'Features',
+  fix: 'Fixes',
+};
 
 export async function planRelease(options = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -16,13 +21,34 @@ export async function planRelease(options = {}) {
     format: options.format ?? 'short',
   });
   const tag = `${options.tagPrefix ?? ''}${version}`;
+  const notes = options.versionOnly
+    ? null
+    : await releaseNotes(cwd, { ...options, tag, existingChangelog: await readChangelog(cwd) });
+  const files = await releaseFiles(cwd, {
+    version: !options.changelogOnly,
+    changelog: !options.versionOnly,
+  });
+  const warnings = await releaseWarnings(cwd, {
+    updatesVersion: !options.changelogOnly,
+  });
 
   return {
     version,
     tag,
     branch: await currentBranch(cwd),
     remote: options.remote ?? 'origin',
-    actions: releaseActions({ version, tag, skipCommit: options.skipCommit }),
+    previousTag: notes?.previousTag ?? null,
+    range: notes?.range ?? null,
+    files,
+    warnings,
+    actions: releaseActions({
+      version,
+      tag,
+      skipCommit: options.skipCommit || options.versionOnly || options.changelogOnly,
+      versionOnly: options.versionOnly,
+      changelogOnly: options.changelogOnly,
+      files,
+    }),
   };
 }
 
@@ -35,11 +61,19 @@ export async function runRelease(options = {}) {
   }
 
   await assertCleanWorktree(cwd);
-  await updatePackageVersion(cwd, plan.version);
-  await updatePackageLock(cwd, plan.version);
-  await prependChangelog(cwd, plan.version, options.date ?? new Date(), options);
+  if (!options.skipCommit && !options.versionOnly && !options.changelogOnly) {
+    await assertTagAvailable(cwd, plan.tag);
+  }
 
-  if (options.skipCommit) {
+  if (!options.changelogOnly) {
+    await updatePackageVersion(cwd, plan.version);
+    await updatePackageLock(cwd, plan.version);
+  }
+  if (!options.versionOnly) {
+    await prependChangelog(cwd, plan.version, options.date ?? new Date(), options);
+  }
+
+  if (options.skipCommit || options.versionOnly || options.changelogOnly) {
     return { ...plan, tag: null };
   }
 
@@ -48,18 +82,24 @@ export async function runRelease(options = {}) {
   try {
     await git(cwd, ['tag', '-a', plan.tag, '-m', `Release ${plan.version}`]);
   } catch (error) {
-    await git(cwd, ['reset', '--hard', 'HEAD~1']);
-    throw new Error(`Failed to create git tag ${plan.tag}; rolled back release commit. ${error.message}`);
+    await git(cwd, ['reset', '--soft', 'HEAD~1']);
+    throw new Error(`Failed to create git tag ${plan.tag}; release commit was undone and file changes were left in the working tree. ${error.message}`);
   }
 
   return plan;
 }
 
-function releaseActions({ version, tag, skipCommit = false }) {
-  const actions = [
-    `update package.json version to ${version}`,
-    `prepend CHANGELOG.md entry for ${version}`,
-  ];
+function releaseActions({ version, tag, skipCommit = false, versionOnly = false, changelogOnly = false, files = [] }) {
+  const actions = [];
+  if (!changelogOnly) {
+    actions.push(`update package.json version to ${version}`);
+    if (files.some((file) => ['package-lock.json', 'npm-shrinkwrap.json'].includes(file))) {
+      actions.push('update npm lockfile version metadata');
+    }
+  }
+  if (!versionOnly) {
+    actions.push(`prepend CHANGELOG.md entry for ${version}`);
+  }
   if (!skipCommit) {
     actions.push(`create git commit chore(release): ${version}`);
     actions.push(`create git tag ${tag}`);
@@ -96,8 +136,14 @@ async function updatePackageLock(cwd, version) {
   }
 }
 
-async function releaseFiles(cwd) {
-  const candidates = ['package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'CHANGELOG.md'];
+async function releaseFiles(cwd, options = {}) {
+  const candidates = [];
+  if (options.version !== false) {
+    candidates.push('package.json', 'package-lock.json', 'npm-shrinkwrap.json');
+  }
+  if (options.changelog !== false) {
+    candidates.push('CHANGELOG.md');
+  }
   const files = [];
   for (const candidate of candidates) {
     if (await fileExists(path.join(cwd, candidate))) {
@@ -105,6 +151,19 @@ async function releaseFiles(cwd) {
     }
   }
   return files;
+}
+
+async function releaseWarnings(cwd, options = {}) {
+  if (!options.updatesVersion) {
+    return [];
+  }
+  const warnings = [];
+  for (const fileName of ['pnpm-lock.yaml', 'yarn.lock']) {
+    if (await fileExists(path.join(cwd, fileName))) {
+      warnings.push(`${fileName} detected; calver-bump does not rewrite this lockfile because it does not store the root package version consistently.`);
+    }
+  }
+  return warnings;
 }
 
 async function fileExists(filePath) {
@@ -116,24 +175,31 @@ async function fileExists(filePath) {
   }
 }
 
+async function readChangelog(cwd) {
+  try {
+    return await readFile(path.join(cwd, 'CHANGELOG.md'), 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  }
+}
+
 async function prependChangelog(cwd, version, date, options = {}) {
   const changelogPath = path.join(cwd, 'CHANGELOG.md');
-  let existing = '';
+  const existing = await readChangelog(cwd);
 
-  try {
-    existing = await readFile(changelogPath, 'utf8');
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-
-  const notes = await releaseNotes(cwd, { ...options, existingChangelog: existing });
+  const notes = await releaseNotes(cwd, {
+    ...options,
+    existingChangelog: existing,
+    tag: `${options.tagPrefix ?? ''}${version}`,
+  });
   const heading = formatReleaseHeading({
     version,
     previousTag: notes.previousTag,
-    tag: `${options.tagPrefix ?? ''}${version}`,
+    tag: options.tagPrefix ? `${options.tagPrefix}${version}` : version,
     compareUrlBuilder: notes.compareUrlBuilder,
   });
-  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes)}${formatFullChangelog(notes.requests)}\n`;
+  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes, options.changelogSections)}${formatFullChangelog(notes.requests)}\n`;
 
   const body = existing.trim().startsWith('# Changelog')
     ? existing.replace(/^# Changelog\s*/, `# Changelog\n\n${entry}\n`)
@@ -143,15 +209,17 @@ async function prependChangelog(cwd, version, date, options = {}) {
 }
 
 async function releaseNotes(cwd, options = {}) {
-  await fetchTags(cwd, options.remote ?? 'origin');
-  const latestTag = await latestReleaseTag(cwd, options.existingChangelog ?? '');
+  if (!options.noFetch) {
+    await fetchTags(cwd, options.remote ?? 'origin');
+  }
+  const latestTag = options.from ?? await latestReleaseTag(cwd, options.existingChangelog ?? '');
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
   const commits = await gitCommits(cwd, range);
   const remoteUrl = await getRemoteUrl(cwd, options.remote ?? 'origin');
   const commitUrlBuilder = remoteUrl ? buildCommitUrlBuilder(remoteUrl) : null;
   const compareUrlBuilder = remoteUrl ? buildCompareUrlBuilder(remoteUrl) : null;
   const requestUrlBuilder = remoteUrl ? buildRequestUrlBuilder(remoteUrl) : null;
-  const allowedTypes = options.types ?? ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
+  const allowedTypes = options.types ?? DEFAULT_TYPES;
   const conventionalCommits = dedupeConventionalChanges(commits
     .map((commit) => ({ ...commit, subject: conventionalSubjectForCommit(commit) ?? commit.subject }))
     .filter((commit) => isConventionalCommit(commit.subject))
@@ -165,6 +233,7 @@ async function releaseNotes(cwd, options = {}) {
   const requests = uniqueRequests(commits.map((commit) => requestForCommit(commit, requestUrlBuilder)).filter(Boolean));
   return {
     previousTag: latestTag,
+    range: latestTag ? `${latestTag}..HEAD` : 'HEAD',
     compareUrlBuilder,
     changes: conventionalCommits.length > 0 ? conventionalCommits : ['No conventional commits in this release.'],
     requests,
@@ -212,19 +281,26 @@ function dedupeConventionalChanges(changes) {
   return deduped;
 }
 
-function formatReleaseNotes(changes) {
+function formatReleaseNotes(changes, sectionConfig = {}) {
   if (changes.length === 1 && changes[0] === 'No conventional commits in this release.') {
     return `- ${changes[0]}`;
   }
 
-  const features = changes.filter((change) => conventionalType(change.subject) === 'feat');
-  const fixes = changes.filter((change) => conventionalType(change.subject) === 'fix');
-  const other = changes.filter((change) => !['feat', 'fix'].includes(conventionalType(change.subject)));
-  const sections = [
-    ['Features', features],
-    ['Fixes', fixes],
-    ['Other Changes', other],
-  ];
+  const sectionMap = { ...DEFAULT_CHANGELOG_SECTIONS, ...sectionConfig };
+  const grouped = new Map();
+  const other = [];
+  for (const change of changes) {
+    const heading = sectionMap[conventionalType(change.subject)];
+    if (!heading) {
+      other.push(change);
+      continue;
+    }
+    grouped.set(heading, [...(grouped.get(heading) ?? []), change]);
+  }
+  const sections = [...grouped.entries()];
+  if (other.length > 0) {
+    sections.push(['Other Changes', other]);
+  }
 
   return sections
     .filter(([, entries]) => entries.length > 0)
@@ -417,6 +493,12 @@ async function tagExists(cwd, tag) {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function assertTagAvailable(cwd, tag) {
+  if (await tagExists(cwd, tag)) {
+    throw new Error(`Git tag ${tag} already exists. Choose another date/format or delete the existing tag before releasing.`);
   }
 }
 
