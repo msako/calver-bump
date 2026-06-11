@@ -130,6 +130,14 @@ Project defaults can be stored in `.calverbumprc.json`:
 }
 ```
 
+## Runtime support
+
+`calver-bump` supports Node.js LTS lines only. The current supported runtime range is Node.js 22 and Node.js 24.
+
+## Publishing
+
+The package includes a manual GitHub Actions publish workflow. Run the `Publish` workflow from GitHub after the package version has been bumped, tests pass, and the npm automation token is available as `NPM_TOKEN`.
+
 ## Notes
 
 - The default `short` format is `YY.MMDD` for the first release of the day, then `YY.MMDD.1`, `YY.MMDD.2`, etc.
