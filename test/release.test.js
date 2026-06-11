@@ -104,6 +104,22 @@ test('runRelease updates package-lock.json when it exists', async () => {
   assert.equal(lock.packages[''].version, '26.0529');
 });
 
+test('planRelease warns about lockfiles that do not carry root package versions consistently', async () => {
+  const repo = await makeRepo();
+  await writeFile(path.join(repo, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+  await writeFile(path.join(repo, 'yarn.lock'), '# yarn lockfile\n');
+
+  const plan = await planRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  assert.deepEqual(plan.warnings, [
+    'pnpm-lock.yaml detected; calver-bump does not rewrite this lockfile because it does not store the root package version consistently.',
+    'yarn.lock detected; calver-bump does not rewrite this lockfile because it does not store the root package version consistently.',
+  ]);
+});
+
 test('runRelease uses the nearest reachable tag as the changelog base', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['tag', '26.0528.1'], { cwd: repo });
@@ -124,6 +140,29 @@ test('runRelease uses the nearest reachable tag as the changelog base', async ()
   assert.match(changelog, /- fix: after non-release tag/);
   assert.doesNotMatch(changelog, /- feat: after calver tag/);
   assert.doesNotMatch(changelog, /- feat: initial app/);
+});
+
+test('runRelease can use an explicit changelog base tag', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['tag', 'base-a'], { cwd: repo });
+  await writeFile(path.join(repo, 'feature-a.txt'), 'a\n');
+  execFileSync('git', ['add', 'feature-a.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: included by explicit base'], { cwd: repo });
+  execFileSync('git', ['tag', 'base-b'], { cwd: repo });
+  await writeFile(path.join(repo, 'feature-b.txt'), 'b\n');
+  execFileSync('git', ['add', 'feature-b.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: also included by explicit base'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    from: 'base-a',
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(changelog, /feat: included by explicit base/);
+  assert.match(changelog, /fix: also included by explicit base/);
+  assert.doesNotMatch(changelog, /feat: initial app/);
 });
 
 test('runRelease includes only conventional commits in the changelog', async () => {
@@ -161,6 +200,25 @@ test('runRelease filters changelog entries by configured conventional commit typ
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(changelog, /- feat: initial app/);
   assert.doesNotMatch(changelog, /fix: excluded by type filter/);
+});
+
+test('runRelease supports custom changelog sections', async () => {
+  const repo = await makeRepo();
+  await writeFile(path.join(repo, 'perf.txt'), 'perf\n');
+  execFileSync('git', ['add', 'perf.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'perf: speed up release notes'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    changelogSections: {
+      perf: 'Performance',
+    },
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(changelog, /### Performance\n\n- perf: speed up release notes/);
+  assert.doesNotMatch(changelog, /### Other Changes\n\n- perf: speed up release notes/);
 });
 
 test('runRelease groups changelog entries by conventional commit type', async () => {
@@ -428,6 +486,31 @@ test('runRelease fetches remote tags before choosing the changelog base', async 
   assert.doesNotMatch(latestEntry, /feat: already in remote tagged release/);
 });
 
+test('runRelease can skip remote tag fetches', async () => {
+  const repo = await makeRepo();
+  const remote = await makeBareRepo();
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo });
+  await writeFile(path.join(repo, 'released.txt'), 'released\n');
+  execFileSync('git', ['add', 'released.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'feat: remote tagged release'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.35.0'], { cwd: repo });
+  execFileSync('git', ['push', 'origin', 'main', '--tags'], { cwd: repo });
+  execFileSync('git', ['tag', '-d', 'v1.35.0'], { cwd: repo });
+  await writeFile(path.join(repo, 'unreleased.txt'), 'unreleased\n');
+  execFileSync('git', ['add', 'unreleased.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: local change'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-06-02T12:00:00-07:00'),
+    noFetch: true,
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(changelog, /feat: remote tagged release/);
+  assert.match(changelog, /fix: local change/);
+});
+
 test('runRelease does not duplicate commits already present in an existing changelog', async () => {
   const repo = await makeRepo();
   await writeFile(path.join(repo, 'released.txt'), 'released\n');
@@ -487,7 +570,7 @@ test('runRelease uses the previous changelog compare target for the new compare 
   assert.doesNotMatch(latestEntry, /feat: already documented release/);
 });
 
-test('runRelease rolls back its release commit when tag creation fails', async () => {
+test('runRelease rejects existing release tags before writing files', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['tag', '26.0529'], { cwd: repo });
   const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
@@ -498,11 +581,16 @@ test('runRelease rolls back its release commit when tag creation fails', async (
       date: new Date('2026-05-29T12:00:00-07:00'),
       existingTags: [],
     }),
-    /Failed to create git tag/,
+    /Git tag 26\.0529 already exists/,
   );
 
   const after = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   assert.equal(after, before);
+  const status = execFileSync('git', ['status', '--porcelain'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.equal(status, '');
 });
 
 test('runRelease can skip commit and tag creation', async () => {
@@ -527,6 +615,50 @@ test('runRelease can skip commit and tag creation', async () => {
   }).trim();
   assert.match(status, /M package\.json/);
   assert.match(status, /\?\? CHANGELOG\.md/);
+});
+
+test('runRelease can update only package version files', async () => {
+  const repo = await makeRepo({ packageLock: true });
+
+  const result = await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    versionOnly: true,
+  });
+
+  assert.equal(result.tag, null);
+  const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
+  const lock = JSON.parse(await readFile(path.join(repo, 'package-lock.json'), 'utf8'));
+  assert.equal(pkg.version, '26.0529');
+  assert.equal(lock.version, '26.0529');
+  await assert.rejects(() => readFile(path.join(repo, 'CHANGELOG.md'), 'utf8'), /ENOENT/);
+  const status = execFileSync('git', ['status', '--porcelain'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.match(status, /M package\.json/);
+  assert.match(status, /M package-lock\.json/);
+});
+
+test('runRelease can update only the changelog', async () => {
+  const repo = await makeRepo();
+
+  const result = await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    changelogOnly: true,
+  });
+
+  assert.equal(result.tag, null);
+  const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
+  assert.equal(pkg.version, '0.0.0');
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(changelog, /## 26\.0529/);
+  const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.equal(subject, 'feat: initial app');
 });
 
 async function makeRepo({ packageLock = false } = {}) {
