@@ -39,10 +39,7 @@ export async function releaseNotes(cwd, options = {}) {
 }
 
 export function formatReleaseHeading({ version, previousTag, tag, compareUrlBuilder }) {
-  const label = previousTag && compareUrlBuilder
-    ? `[${version}](${compareUrlBuilder(previousTag, tag)})`
-    : version;
-  return `## ${label}`;
+  return `## ${version}`;
 }
 
 export function formatReleaseNotes(changes, sectionConfig = {}) {
@@ -72,11 +69,15 @@ export function formatReleaseNotes(changes, sectionConfig = {}) {
     .join('\n\n');
 }
 
-export function formatFullChangelog(requests) {
-  if (requests.length === 0) {
+export function formatFullChangelog(requests, compareUrl = null) {
+  const entries = [
+    ...requests.map((request) => formatRequestEntry(request)),
+    ...(compareUrl ? [`[Compare changes](${compareUrl})`] : []),
+  ];
+  if (entries.length === 0) {
     return '';
   }
-  return `\n\n### Full Changelog\n\n${requests.map((request) => `- ${formatRequestEntry(request)}`).join('\n')}`;
+  return `\n\n### Full Changelog\n\n${entries.map((entry) => `- ${entry}`).join('\n')}`;
 }
 
 async function latestReleaseTag(cwd, changelog) {
@@ -88,7 +89,7 @@ async function latestReleaseTag(cwd, changelog) {
 }
 
 function latestChangelogCompareTarget(changelog) {
-  const match = /^## \[[^\]]+\]\([^)]*\/(?:-\/)?compare\/[^)]*?\.{3}(?<tag>[^)\s]+)\)/m.exec(changelog);
+  const match = /\[[^\]]+\]\([^)]*\/(?:-\/)?compare\/[^)]*?\.{3}(?<tag>[^)\s]+)\)/m.exec(changelog);
   return match?.groups.tag ?? null;
 }
 

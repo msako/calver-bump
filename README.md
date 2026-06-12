@@ -20,14 +20,15 @@ Example:
 2. Updates `package-lock.json` or `npm-shrinkwrap.json` when present.
 3. Warns when `pnpm-lock.yaml` or `yarn.lock` is present, because those lockfiles do not store the root package version consistently.
 4. Creates or prepends a `CHANGELOG.md` entry from conventional commits since the nearest reachable tag.
-5. Creates a release commit.
-6. Creates an annotated git tag.
+5. Prints the git commands needed to commit, tag, and push the reviewed release.
 
 ## Usage
 
 ```bash
 npx calver-bump
 ```
+
+By default, `calver-bump` updates files only. Review `CHANGELOG.md`, then run the printed git commands when the release notes are correct.
 
 Preview the planned release without writing files:
 
@@ -107,7 +108,19 @@ Update only `CHANGELOG.md`:
 npx calver-bump --changelog-only
 ```
 
-Update files without creating a release commit or tag:
+Create a release commit after updating files:
+
+```bash
+npx calver-bump --commit
+```
+
+Create a release commit and annotated tag after updating files:
+
+```bash
+npx calver-bump --tag
+```
+
+Explicitly update files without creating a release commit or tag:
 
 ```bash
 npx calver-bump --skip-commit
@@ -152,6 +165,10 @@ The package includes a manual GitHub Actions publish workflow. Run the `Publish`
 - Changelog entries fall back to commit hash links for GitHub and GitLab-style remotes when no pull/merge request reference is found.
 - Release entries include a `Full Changelog` section with a deduped list of pull/merge requests found in the release range, including the local commit title when available.
 - Later releases prepend only commits since the previous nearest reachable tag.
+- Plain `calver-bump` does not commit or tag by default; it prints the follow-up `git add`, `git commit`, `git tag`, and `git push --follow-tags` commands.
+- Use `--commit` to create only the release commit.
+- Use `--tag` to create the release commit and annotated tag.
+- Use `--push` to create the release commit, create the annotated tag, and push both.
 - Release tags are annotated so `git push --follow-tags <remote> <branch>` pushes them.
 - The working tree must be clean before creating a real release.
 - Existing release tags are rejected before files are written.

@@ -10,6 +10,7 @@ const execFile = promisify(execFileCallback);
 const args = process.argv.slice(2);
 const KNOWN_OPTIONS = new Set([
   '--changelog-only',
+  '--commit',
   '--dry-run',
   '--format',
   '--from',
@@ -18,6 +19,7 @@ const KNOWN_OPTIONS = new Set([
   '--push',
   '--remote',
   '--skip-commit',
+  '--tag',
   '--tag-prefix',
   '--types',
   '--version',
@@ -49,19 +51,17 @@ try {
   for (const action of result.actions) {
     console.log(`- ${action}`);
   }
-  if (options.push && !options.dryRun && createsGitObjects(options)) {
+  if (options.push && !options.dryRun && createsTag(options)) {
     const pushArgs = ['push', '--follow-tags', result.remote, result.branch];
     console.log('');
     console.log(`Running: git ${pushArgs.join(' ')}`);
     await execFile('git', pushArgs, { encoding: 'utf8' });
-  } else if (!options.dryRun && createsGitObjects(options)) {
+  } else if (!options.dryRun) {
     console.log('');
     console.log('Next steps:');
-    console.log('1. Review the release commit:');
-    console.log('   git show --stat HEAD');
-    console.log('2. Push the release commit and tag:');
-    console.log(`   git push --follow-tags ${result.remote} ${result.branch}`);
-    console.log('3. Trigger or verify your deployment pipeline.');
+    for (const instruction of nextStepInstructions(result, options)) {
+      console.log(instruction);
+    }
   }
 } catch (error) {
   console.error(error.message);
@@ -73,15 +73,24 @@ async function releaseOptions(args) {
   const config = await readConfig();
   const versionOnly = flag(args, '--version-only') ?? config.versionOnly ?? false;
   const changelogOnly = flag(args, '--changelog-only') ?? config.changelogOnly ?? false;
+  const skipCommit = flag(args, '--skip-commit') ?? config.skipCommit ?? false;
+  const push = flag(args, '--push') ?? config.push ?? false;
+  const tag = push || (flag(args, '--tag') ?? config.tag ?? false);
+  const commit = tag || (flag(args, '--commit') ?? config.commit ?? false);
   if (versionOnly && changelogOnly) {
     throw new Error('--version-only cannot be combined with --changelog-only.');
+  }
+  if (skipCommit && (commit || tag || push)) {
+    throw new Error('--skip-commit cannot be combined with --commit, --tag, or --push.');
   }
   return {
     ...config,
     dryRun: flag(args, '--dry-run') ?? config.dryRun ?? false,
     noFetch: flag(args, '--no-fetch') ?? config.noFetch ?? false,
-    push: flag(args, '--push') ?? config.push ?? false,
-    skipCommit: flag(args, '--skip-commit') ?? config.skipCommit ?? false,
+    commit,
+    tag,
+    push,
+    skipCommit,
     versionOnly,
     changelogOnly,
     from: value(args, '--from') ?? config.from,
@@ -134,7 +143,7 @@ function rejectUnknownOptions(args) {
 
 function printResult(result, options) {
   console.log(`Release version: ${result.version}`);
-  console.log(`Git tag: ${createsGitObjects(options) ? result.tag : '(not created)'}`);
+  console.log(`Git tag: ${result.createdTag ?? '(not created)'}`);
   console.log(`Branch: ${result.branch}`);
   console.log(`Remote: ${result.remote}`);
   if (!options.versionOnly) {
@@ -151,8 +160,42 @@ function printResult(result, options) {
   console.log(options.dryRun ? 'Planned actions:' : 'Completed actions:');
 }
 
-function createsGitObjects(options) {
-  return !options.skipCommit && !options.versionOnly && !options.changelogOnly;
+function createsCommit(options) {
+  return Boolean(options.commit || options.tag || options.push) && !options.skipCommit && !options.versionOnly && !options.changelogOnly;
+}
+
+function createsTag(options) {
+  return Boolean(options.tag || options.push) && createsCommit(options);
+}
+
+function nextStepInstructions(result, options) {
+  if (options.versionOnly || options.changelogOnly) {
+    return ['Review the generated file changes.'];
+  }
+  if (!createsCommit(options)) {
+    return [
+      'Review CHANGELOG.md, then run:',
+      `git add ${result.files.join(' ')}`,
+      `git commit -m "chore(release): ${result.version}"`,
+      `git tag -a ${result.tag} -m "Release ${result.version}"`,
+      `git push --follow-tags ${result.remote} ${result.branch}`,
+    ];
+  }
+  if (!createsTag(options)) {
+    return [
+      'Review the release commit, then run:',
+      'git show --stat HEAD',
+      `git tag -a ${result.tag} -m "Release ${result.version}"`,
+      `git push --follow-tags ${result.remote} ${result.branch}`,
+    ];
+  }
+  return [
+    'Review the release commit:',
+    'git show --stat HEAD',
+    'Push the release commit and tag:',
+    `git push --follow-tags ${result.remote} ${result.branch}`,
+    'Trigger or verify your deployment pipeline.',
+  ];
 }
 
 function helpText() {
@@ -167,8 +210,10 @@ Options:
   --no-fetch             Use local tags only; do not fetch remote tags.
   --version-only         Update package.json and supported npm lockfiles only.
   --changelog-only       Update CHANGELOG.md only.
-  --skip-commit          Update files without creating a release commit or tag.
-  --push                 Push the release commit and annotated tag.
+  --commit               Create the release commit after updating files.
+  --tag                  Create the release commit and annotated tag.
+  --skip-commit          Explicitly update files without creating a release commit or tag.
+  --push                 Create, tag, and push the release.
   --remote <name>        Remote used for fetch, links, and push.
   --version              Print the calver-bump package version.
   --help                 Show this help.

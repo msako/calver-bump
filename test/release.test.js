@@ -20,8 +20,6 @@ test('planRelease reports version, changelog, commit, and tag actions without wr
   assert.deepEqual(plan.actions, [
     'update package.json version to 26.0529',
     'prepend CHANGELOG.md entry for 26.0529',
-    'create git commit chore(release): 26.0529',
-    'create git tag 26.0529',
   ]);
 
   const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
@@ -35,6 +33,7 @@ test('runRelease supports tag prefixes without changing package.json version', a
     cwd: repo,
     date: new Date('2026-05-29T12:00:00-07:00'),
     tagPrefix: 'v',
+    tag: true,
   });
 
   assert.equal(result.version, '26.0529');
@@ -56,6 +55,7 @@ test('runRelease updates package.json, prepends changelog, commits, and tags', a
   const result = await runRelease({
     cwd: repo,
     date: new Date('2026-05-29T12:00:00-07:00'),
+    tag: true,
   });
 
   assert.equal(result.version, '26.0529');
@@ -86,6 +86,7 @@ test('runRelease returns the current branch for push guidance', async () => {
   const result = await runRelease({
     cwd: repo,
     date: new Date('2026-05-29T12:00:00-07:00'),
+    tag: true,
   });
 
   assert.equal(result.branch, 'release/train');
@@ -264,7 +265,11 @@ test('runRelease links each changelog entry to its commit on GitHub', async () =
   );
   assert.match(
     changelog,
-    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /^# Changelog\n\n## 26\.0529\n\n### Features/,
+  );
+  assert.match(
+    changelog,
+    /### Full Changelog\n\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
   );
 });
 
@@ -290,7 +295,11 @@ test('runRelease links changelog entries for private GitLab-style remotes', asyn
   );
   assert.match(
     changelog,
-    /^# Changelog\n\n## \[26\.0529\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /^# Changelog\n\n## 26\.0529\n\n### Fixes/,
+  );
+  assert.match(
+    changelog,
+    /### Full Changelog\n\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
   );
 });
 
@@ -314,7 +323,7 @@ test('runRelease links changelog entries to GitHub pull requests when commit sub
   );
   assert.match(
     changelog,
-    /### Full Changelog\n\n- \[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\) feat: add pull request links \(#42\)/,
+    /### Full Changelog\n\n- \[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\) feat: add pull request links \(#42\)\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
   );
 });
 
@@ -357,7 +366,7 @@ test('runRelease links changelog entries to GitLab merge requests and dedupes th
   assert.equal(fullChangelogEntries.length, 2);
   assert.match(
     changelog,
-    /### Full Changelog\n\n- \[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\) fix\(review\): block rule-listed reviewers/,
+    /### Full Changelog\n\n- \[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\) fix\(review\): block rule-listed reviewers\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
   );
 });
 
@@ -400,6 +409,7 @@ test('runRelease prepends only commits since the previous CalVer tag on later re
   await runRelease({
     cwd: repo,
     date: new Date('2026-05-29T12:00:00-07:00'),
+    tag: true,
   });
   await writeFile(path.join(repo, 'second.txt'), 'second\n');
   execFileSync('git', ['add', 'second.txt'], { cwd: repo });
@@ -408,6 +418,7 @@ test('runRelease prepends only commits since the previous CalVer tag on later re
   await runRelease({
     cwd: repo,
     date: new Date('2026-05-29T13:00:00-07:00'),
+    tag: true,
   });
 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
@@ -563,7 +574,11 @@ test('runRelease uses the previous changelog compare target for the new compare 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    /^# Changelog\n\n## \[26\.0602\]\(https:\/\/gitlab\.ops\/pss\/d2pass\/d2p_next\/-\/compare\/v1\.35\.0\.\.\.v26\.0602\)/,
+    /^# Changelog\n\n## 26\.0602\n\n### Fixes/,
+  );
+  assert.match(
+    changelog,
+    /### Full Changelog\n\n- \[Compare changes\]\(https:\/\/gitlab\.ops\/pss\/d2pass\/d2p_next\/-\/compare\/v1\.35\.0\.\.\.v26\.0602\)/,
   );
   const latestEntry = changelog.split('## [1.35.0]')[0];
   assert.match(latestEntry, /- fix: new release change/);
@@ -580,6 +595,7 @@ test('runRelease rejects existing release tags before writing files', async () =
       cwd: repo,
       date: new Date('2026-05-29T12:00:00-07:00'),
       existingTags: [],
+      tag: true,
     }),
     /Git tag 26\.0529 already exists/,
   );
@@ -602,7 +618,7 @@ test('runRelease can skip commit and tag creation', async () => {
     skipCommit: true,
   });
 
-  assert.equal(result.tag, null);
+  assert.equal(result.createdTag, null);
   const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
     cwd: repo,
     encoding: 'utf8',
@@ -626,7 +642,7 @@ test('runRelease can update only package version files', async () => {
     versionOnly: true,
   });
 
-  assert.equal(result.tag, null);
+  assert.equal(result.createdTag, null);
   const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
   const lock = JSON.parse(await readFile(path.join(repo, 'package-lock.json'), 'utf8'));
   assert.equal(pkg.version, '26.0529');
@@ -649,7 +665,7 @@ test('runRelease can update only the changelog', async () => {
     changelogOnly: true,
   });
 
-  assert.equal(result.tag, null);
+  assert.equal(result.createdTag, null);
   const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
   assert.equal(pkg.version, '0.0.0');
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
