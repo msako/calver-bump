@@ -32,17 +32,17 @@ export async function updatePackageLock(cwd, version) {
 
 export async function releaseFiles(cwd, options = {}) {
   const candidates = [];
+  const files = [];
   if (options.version !== false) {
     candidates.push('package.json', 'package-lock.json', 'npm-shrinkwrap.json');
   }
-  if (options.changelog !== false) {
-    candidates.push('CHANGELOG.md');
-  }
-  const files = [];
   for (const candidate of candidates) {
     if (await fileExists(path.join(cwd, candidate))) {
       files.push(candidate);
     }
+  }
+  if (options.changelog !== false) {
+    files.push('CHANGELOG.md');
   }
   return files;
 }

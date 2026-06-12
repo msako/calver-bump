@@ -42,7 +42,8 @@ export async function planRelease(options = {}) {
     actions: releaseActions({
       version,
       tag,
-      skipCommit: options.skipCommit || options.versionOnly || options.changelogOnly,
+      commit: createsCommit(options),
+      tagRelease: createsTag(options),
       versionOnly: options.versionOnly,
       changelogOnly: options.changelogOnly,
       files,
@@ -59,7 +60,7 @@ export async function runRelease(options = {}) {
   }
 
   await assertCleanWorktree(cwd);
-  if (!options.skipCommit && !options.versionOnly && !options.changelogOnly) {
+  if (createsTag(options)) {
     await assertTagAvailable(cwd, plan.tag);
   }
 
@@ -71,23 +72,25 @@ export async function runRelease(options = {}) {
     await prependChangelog(cwd, plan.version, options);
   }
 
-  if (options.skipCommit || options.versionOnly || options.changelogOnly) {
-    return { ...plan, tag: null };
+  if (!createsCommit(options)) {
+    return { ...plan, createdTag: null };
   }
 
   await git(cwd, ['add', ...await releaseFiles(cwd)]);
   await git(cwd, ['commit', '-m', `chore(release): ${plan.version}`]);
-  try {
-    await git(cwd, ['tag', '-a', plan.tag, '-m', `Release ${plan.version}`]);
-  } catch (error) {
-    await git(cwd, ['reset', '--soft', 'HEAD~1']);
-    throw new Error(`Failed to create git tag ${plan.tag}; release commit was undone and file changes were left in the working tree. ${error.message}`);
+  if (createsTag(options)) {
+    try {
+      await git(cwd, ['tag', '-a', plan.tag, '-m', `Release ${plan.version}`]);
+    } catch (error) {
+      await git(cwd, ['reset', '--soft', 'HEAD~1']);
+      throw new Error(`Failed to create git tag ${plan.tag}; release commit was undone and file changes were left in the working tree. ${error.message}`);
+    }
   }
 
-  return plan;
+  return createsTag(options) ? { ...plan, createdTag: plan.tag } : { ...plan, createdTag: null };
 }
 
-function releaseActions({ version, tag, skipCommit = false, versionOnly = false, changelogOnly = false, files = [] }) {
+function releaseActions({ version, tag, commit = false, tagRelease = false, versionOnly = false, changelogOnly = false, files = [] }) {
   const actions = [];
   if (!changelogOnly) {
     actions.push(`update package.json version to ${version}`);
@@ -98,11 +101,21 @@ function releaseActions({ version, tag, skipCommit = false, versionOnly = false,
   if (!versionOnly) {
     actions.push(`prepend CHANGELOG.md entry for ${version}`);
   }
-  if (!skipCommit) {
+  if (commit) {
     actions.push(`create git commit chore(release): ${version}`);
+  }
+  if (tagRelease) {
     actions.push(`create git tag ${tag}`);
   }
   return actions;
+}
+
+function createsCommit(options) {
+  return Boolean(options.commit || options.tag || options.push) && !options.skipCommit && !options.versionOnly && !options.changelogOnly;
+}
+
+function createsTag(options) {
+  return Boolean(options.tag || options.push) && createsCommit(options);
 }
 
 async function prependChangelog(cwd, version, options = {}) {
@@ -119,7 +132,10 @@ async function prependChangelog(cwd, version, options = {}) {
     tag: options.tagPrefix ? `${options.tagPrefix}${version}` : version,
     compareUrlBuilder: notes.compareUrlBuilder,
   });
-  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes, options.changelogSections)}${formatFullChangelog(notes.requests)}\n`;
+  const compareUrl = notes.previousTag && notes.compareUrlBuilder
+    ? notes.compareUrlBuilder(notes.previousTag, options.tagPrefix ? `${options.tagPrefix}${version}` : version)
+    : null;
+  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes, options.changelogSections)}${formatFullChangelog(notes.requests, compareUrl)}\n`;
 
   const body = existing.trim().startsWith('# Changelog')
     ? existing.replace(/^# Changelog\s*/, `# Changelog\n\n${entry}\n`)

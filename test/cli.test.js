@@ -23,7 +23,8 @@ test('CLI prints help', () => {
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Usage: calver-bump/);
-  assert.match(result.stdout, /--version-only/);
+  assert.match(result.stdout, /--commit/);
+  assert.match(result.stdout, /--tag/);
 });
 
 test('CLI rejects unknown options', () => {
@@ -44,6 +45,16 @@ test('CLI rejects conflicting write modes', () => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /cannot be combined/);
+});
+
+test('CLI rejects skip-commit with git action flags', () => {
+  const result = spawnSync(process.execPath, ['bin/calver-bump.js', '--skip-commit', '--tag'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /--skip-commit cannot be combined/);
 });
 
 test('CLI dry-run output includes release audit details', async () => {
@@ -76,7 +87,7 @@ test('CLI does not print push guidance for version-only releases', async () => {
   assert.doesNotMatch(result.stdout, /git push --follow-tags/);
 });
 
-test('CLI explains how to push the release commit and tag after a real release', async () => {
+test('CLI prints manual release commands by default', async () => {
   const repo = await makeRepo();
   const cliPath = path.resolve('bin/calver-bump.js');
 
@@ -87,6 +98,9 @@ test('CLI explains how to push the release commit and tag after a real release',
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Next steps:/);
+  assert.match(result.stdout, /git add package\.json CHANGELOG\.md/);
+  assert.match(result.stdout, /git commit -m "chore\(release\): 26\.\d{4}"/);
+  assert.match(result.stdout, /git tag -a 26\.\d{4} -m "Release 26\.\d{4}"/);
   assert.match(result.stdout, /git push --follow-tags origin main/);
 });
 
@@ -106,12 +120,18 @@ test('CLI reads .calverbumprc.json defaults', async () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /create git tag v26\.\d{4}/);
+  assert.match(result.stdout, /Git tag: \(not created\)/);
   const tag = execFileSync('git', ['tag', '--list', 'v26*'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.match(tag, /^v26\.\d{4}$/);
+  assert.equal(tag, '');
+  const changelog = execFileSync('git', ['status', '--porcelain'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+  assert.match(changelog, /M package\.json/);
+  assert.match(changelog, /\?\? CHANGELOG\.md/);
 });
 
 test('CLI prints and runs push command when --push is enabled', async () => {
@@ -147,6 +167,45 @@ test('CLI supports --remote with --push', async () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Running: git push --follow-tags upstream main/);
+});
+
+test('CLI creates a release commit without a tag when --commit is enabled', async () => {
+  const repo = await makeRepo();
+  const cliPath = path.resolve('bin/calver-bump.js');
+
+  const result = spawnSync(process.execPath, [cliPath, '--commit'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /create git commit chore\(release\): 26\.\d{4}/);
+  assert.doesNotMatch(result.stdout, /create git tag/);
+  assert.match(result.stdout, /git tag -a 26\.\d{4} -m "Release 26\.\d{4}"/);
+  const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.match(subject, /^chore\(release\): 26\.\d{4}$/);
+});
+
+test('CLI creates a release commit and tag when --tag is enabled', async () => {
+  const repo = await makeRepo();
+  const cliPath = path.resolve('bin/calver-bump.js');
+
+  const result = spawnSync(process.execPath, [cliPath, '--tag'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /create git commit chore\(release\): 26\.\d{4}/);
+  assert.match(result.stdout, /create git tag 26\.\d{4}/);
+  const tag = execFileSync('git', ['tag', '--list', '26*'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.match(tag, /^26\.\d{4}$/);
 });
 
 async function makeRepo() {
