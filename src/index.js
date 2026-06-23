@@ -8,7 +8,7 @@ import {
   updatePackageVersion,
   writeChangelog,
 } from './files.js';
-import { assertCleanWorktree, assertTagAvailable, currentBranch, git, gitLines } from './git.js';
+import { assertTagAvailable, currentBranch, git, gitLines } from './git.js';
 
 export async function planRelease(options = {}) {
   const cwd = options.cwd ?? process.cwd();
@@ -59,7 +59,6 @@ export async function runRelease(options = {}) {
     return plan;
   }
 
-  await assertCleanWorktree(cwd);
   if (createsTag(options)) {
     await assertTagAvailable(cwd, plan.tag);
   }

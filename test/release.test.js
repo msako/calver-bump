@@ -92,6 +92,26 @@ test('runRelease returns the current branch for push guidance', async () => {
   assert.equal(result.branch, 'release/train');
 });
 
+test('runRelease can create a release commit and tag with unrelated dirty files', async () => {
+  const repo = await makeRepo();
+  await writeFile(path.join(repo, 'scratch.txt'), 'work in progress\n');
+
+  const result = await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    tag: true,
+  });
+
+  assert.equal(result.createdTag, '26.0529');
+  const status = execFileSync('git', ['status', '--porcelain'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+  assert.match(status, /\?\? scratch\.txt/);
+  assert.doesNotMatch(status, /package\.json/);
+  assert.doesNotMatch(status, /CHANGELOG\.md/);
+});
+
 test('runRelease updates package-lock.json when it exists', async () => {
   const repo = await makeRepo({ packageLock: true });
 
