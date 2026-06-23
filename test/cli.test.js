@@ -99,13 +99,13 @@ test('CLI creates a release commit and tag by default', async () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Next steps:/);
   assert.match(result.stdout, /create git commit chore\(release\): 26\.\d{4}/);
-  assert.match(result.stdout, /create git tag 26\.\d{4}/);
+  assert.match(result.stdout, /create git tag v26\.\d{4}/);
   assert.match(result.stdout, /git push --follow-tags origin main/);
-  const tag = execFileSync('git', ['tag', '--list', '26*'], {
+  const tag = execFileSync('git', ['tag', '--list', 'v26*'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.match(tag, /^26\.\d{4}$/);
+  assert.match(tag, /^v26\.\d{4}$/);
 });
 
 test('CLI reads .calverbumprc.json defaults', async () => {
@@ -150,11 +150,11 @@ test('CLI prints and runs push command when --push is enabled', async () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Running: git push --follow-tags origin main/);
-  const remoteTags = execFileSync('git', ['tag', '--list', '26*'], {
+  const remoteTags = execFileSync('git', ['tag', '--list', 'v26*'], {
     cwd: remote,
     encoding: 'utf8',
   }).trim();
-  assert.match(remoteTags, /^26\.\d{4}$/);
+  assert.match(remoteTags, /^v26\.\d{4}$/);
 });
 
 test('CLI supports --remote with --push', async () => {
@@ -184,7 +184,7 @@ test('CLI creates a release commit without a tag when --commit is enabled', asyn
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /create git commit chore\(release\): 26\.\d{4}/);
   assert.doesNotMatch(result.stdout, /create git tag/);
-  assert.match(result.stdout, /git tag -a 26\.\d{4} -m "Release 26\.\d{4}"/);
+  assert.match(result.stdout, /git tag -a v26\.\d{4} -m "Release 26\.\d{4}"/);
   const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
     cwd: repo,
     encoding: 'utf8',
@@ -203,12 +203,12 @@ test('CLI creates a release commit and tag when --tag is enabled', async () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /create git commit chore\(release\): 26\.\d{4}/);
-  assert.match(result.stdout, /create git tag 26\.\d{4}/);
-  const tag = execFileSync('git', ['tag', '--list', '26*'], {
+  assert.match(result.stdout, /create git tag v26\.\d{4}/);
+  const tag = execFileSync('git', ['tag', '--list', 'v26*'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.match(tag, /^26\.\d{4}$/);
+  assert.match(tag, /^v26\.\d{4}$/);
 });
 
 async function makeRepo() {
