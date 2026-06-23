@@ -21,6 +21,7 @@ export async function releaseNotes(cwd, options = {}) {
   const conventionalCommits = dedupeConventionalChanges(commits
     .map((commit) => ({ ...commit, subject: conventionalSubjectForCommit(commit) ?? commit.subject }))
     .filter((commit) => isConventionalCommit(commit.subject))
+    .filter((commit) => !isReleaseCommit(commit.subject))
     .filter((commit) => allowedTypes.includes(conventionalType(commit.subject)))
     .filter((commit) => !isCommitInChangelog(commit, options.existingChangelog ?? ''))
     .map((commit) => ({
@@ -28,7 +29,10 @@ export async function releaseNotes(cwd, options = {}) {
       request: requestForCommit(commit, requestUrlBuilder),
       url: commitUrlBuilder ? commitUrlBuilder(commit.hash) : null,
     })));
-  const requests = uniqueRequests(commits.map((commit) => requestForCommit(commit, requestUrlBuilder)).filter(Boolean));
+  const requests = uniqueRequests(commits
+    .filter((commit) => !isReleaseCommit(conventionalSubjectForCommit(commit) ?? commit.subject))
+    .map((commit) => requestForCommit(commit, requestUrlBuilder))
+    .filter(Boolean));
   return {
     previousTag: latestTag,
     range: latestTag ? `${latestTag}..HEAD` : 'HEAD',
@@ -102,6 +106,10 @@ function isConventionalCommit(subject) {
   return /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/.test(subject);
 }
 
+function isReleaseCommit(subject) {
+  return /^chore\(release\):\s.+/.test(subject);
+}
+
 function conventionalSubjectForCommit(commit) {
   return commitLines(commit).find((line) => isConventionalCommit(line)) ?? null;
 }
@@ -133,14 +141,16 @@ function conventionalType(subject) {
 
 function formatCommitEntry(commit) {
   const shortHash = commit.hash.slice(0, 7);
-  const suffix = commit.request
-    ? ` (${formatRequestLink(commit.request)})`
-    : commit.url ? ` ([${shortHash}](${commit.url}))` : ` (${shortHash})`;
+  const links = [
+    shortHash,
+    commit.request ? formatRequestLink(commit.request) : null,
+  ].filter(Boolean);
+  const suffix = ` (${links.join(', ')})`;
   return `${commit.subject}${suffix}`;
 }
 
 function formatRequestLink(request) {
-  return request.url ? `[${request.label}](${request.url})` : request.label;
+  return request.label;
 }
 
 function formatRequestEntry(request) {
@@ -221,7 +231,7 @@ function requestTitleForCommit(commit) {
 }
 
 function parseRequestReference(message) {
-  const gitlabMerge = /(?:^|\s)(?:See merge request\s+\S+!|!)(?<number>\d+)(?=\D|$)/i.exec(message);
+  const gitlabMerge = /(?:^|[\s(])(?:See merge request\s+\S+!|!)(?<number>\d+)(?=\D|$)/i.exec(message);
   if (gitlabMerge) {
     return { provider: 'gitlab', number: gitlabMerge.groups.number, label: `!${gitlabMerge.groups.number}` };
   }
@@ -258,7 +268,7 @@ function parseGitRemote(remote) {
     return sshMatch.groups;
   }
 
-  const httpsMatch = /^https:\/\/(?<host>[^/]+)\/(?<repo>.+?)(?:\.git)?$/.exec(remote);
+  const httpsMatch = /^https?:\/\/(?<host>[^/]+)\/(?<repo>.+?)(?:\.git)?$/.exec(remote);
   if (httpsMatch) {
     return httpsMatch.groups;
   }

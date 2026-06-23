@@ -243,7 +243,7 @@ test('runRelease groups changelog entries by conventional commit type', async ()
   );
 });
 
-test('runRelease links each changelog entry to its commit on GitHub', async () => {
+test('runRelease includes raw commit hashes for GitHub changelog entries', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:msako/demo-app.git'], { cwd: repo });
   execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
@@ -261,8 +261,9 @@ test('runRelease links each changelog entry to its commit on GitHub', async () =
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    new RegExp(`- feat: add linked changelog entry \\(\\[${shortHash}\\]\\(https://github\\.com/msako/demo-app/commit/${hash}\\)\\)`),
+    new RegExp(`- feat: add linked changelog entry \\(${shortHash}\\)`),
   );
+  assert.doesNotMatch(changelog, new RegExp(`\\[${shortHash}\\]\\(https://github\\.com/msako/demo-app/commit/${hash}\\)`));
   assert.match(
     changelog,
     /^# Changelog\n\n## 26\.0529\n\n### Features/,
@@ -273,7 +274,7 @@ test('runRelease links each changelog entry to its commit on GitHub', async () =
   );
 });
 
-test('runRelease links changelog entries for private GitLab-style remotes', async () => {
+test('runRelease includes raw commit hashes for private GitLab-style remotes', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
   execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
@@ -291,8 +292,9 @@ test('runRelease links changelog entries for private GitLab-style remotes', asyn
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    new RegExp(`- fix: link private gitlab commit \\(\\[${shortHash}\\]\\(https://gitlab\\.internal\\.example\\.com/platform/demo-app/-/commit/${hash}\\)\\)`),
+    new RegExp(`- fix: link private gitlab commit \\(${shortHash}\\)`),
   );
+  assert.doesNotMatch(changelog, new RegExp(`\\[${shortHash}\\]\\(https://gitlab\\.internal\\.example\\.com/platform/demo-app/-/commit/${hash}\\)`));
   assert.match(
     changelog,
     /^# Changelog\n\n## 26\.0529\n\n### Fixes/,
@@ -303,7 +305,7 @@ test('runRelease links changelog entries for private GitLab-style remotes', asyn
   );
 });
 
-test('runRelease links changelog entries to GitHub pull requests when commit subjects include PR numbers', async () => {
+test('runRelease includes raw GitHub pull request labels when commit subjects include PR numbers', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:msako/demo-app.git'], { cwd: repo });
   execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
@@ -319,15 +321,15 @@ test('runRelease links changelog entries to GitHub pull requests when commit sub
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    /- feat: add pull request links \(#42\) \(\[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\)\)/,
+    /- feat: add pull request links \(#42\) \([a-f0-9]{7}, #42\)/,
   );
   assert.match(
     changelog,
-    /### Full Changelog\n\n- \[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\) feat: add pull request links \(#42\)\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /### Full Changelog\n\n- #42 feat: add pull request links \(#42\)\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
   );
 });
 
-test('runRelease links changelog entries to GitLab merge requests and dedupes the full changelog', async () => {
+test('runRelease includes raw GitLab merge request labels and dedupes the full changelog', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
   execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
@@ -342,6 +344,8 @@ test('runRelease links changelog entries to GitLab merge requests and dedupes th
     '-m',
     'See merge request platform/demo-app!77',
   ], { cwd: repo });
+  const hash = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const shortHash = hash.slice(0, 7);
   await writeFile(path.join(repo, 'merge.txt'), 'merge\n');
   execFileSync('git', ['add', 'merge.txt'], { cwd: repo });
   execFileSync('git', [
@@ -360,13 +364,15 @@ test('runRelease links changelog entries to GitLab merge requests and dedupes th
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(
     changelog,
-    /- fix\(review\): block rule-listed reviewers \(\[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\)\)/,
+    new RegExp(`- fix\\(review\\): block rule-listed reviewers \\(${shortHash}, !77\\)`),
   );
-  const fullChangelogEntries = changelog.match(/\[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\)/g) ?? [];
+  assert.doesNotMatch(changelog, new RegExp(`\\[${shortHash}\\]\\(https://gitlab\\.internal\\.example\\.com/platform/demo-app/-/commit/${hash}\\)`));
+  assert.doesNotMatch(changelog, /\[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\)/);
+  const fullChangelogEntries = changelog.match(/!77/g) ?? [];
   assert.equal(fullChangelogEntries.length, 2);
   assert.match(
     changelog,
-    /### Full Changelog\n\n- \[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\) fix\(review\): block rule-listed reviewers\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /### Full Changelog\n\n- !77 fix\(review\): block rule-listed reviewers\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
   );
 });
 
@@ -399,9 +405,34 @@ test('runRelease prefers merge request entries over duplicate commit hash entrie
   const fixes = changelog.match(/### Fixes\n\n(?<body>[\s\S]*?)(?:\n\n###|\n?$)/)?.groups.body ?? '';
   assert.match(
     fixes,
-    /- fix\(review\): block rule-listed reviewers \(\[!77\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/77\)\)/,
+    /- fix\(review\): block rule-listed reviewers \([a-f0-9]{7}, !77\)/,
   );
   assert.doesNotMatch(fixes, new RegExp(rawHash.slice(0, 7)));
+});
+
+test('runRelease excludes release commits from changelog entries and full changelog requests', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
+  execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
+  await writeFile(path.join(repo, 'release.txt'), 'release\n');
+  execFileSync('git', ['add', 'release.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'chore(release): 1.0.0 (!77)'], { cwd: repo });
+  await writeFile(path.join(repo, 'fix.txt'), 'fix\n');
+  execFileSync('git', ['add', 'fix.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-m', 'fix: include real change (!78)'], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  const latestEntry = changelog.match(/^# Changelog\n\n(?<entry>## [\s\S]*?)(?:\n## |\n?$)/)?.groups.entry ?? '';
+  assert.match(latestEntry, /- fix: include real change \(!78\)/);
+  assert.match(latestEntry, /!78/);
+  assert.doesNotMatch(latestEntry, /\[!78\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/merge_requests\/78\)/);
+  assert.doesNotMatch(latestEntry, /chore\(release\): 1\.0\.0/);
+  assert.doesNotMatch(latestEntry, /merge_requests\/77/);
 });
 
 test('runRelease prepends only commits since the previous CalVer tag on later releases', async () => {
