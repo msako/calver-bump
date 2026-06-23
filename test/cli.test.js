@@ -87,7 +87,7 @@ test('CLI does not print push guidance for version-only releases', async () => {
   assert.doesNotMatch(result.stdout, /git push --follow-tags/);
 });
 
-test('CLI prints manual release commands by default', async () => {
+test('CLI creates a release commit and tag by default', async () => {
   const repo = await makeRepo();
   const cliPath = path.resolve('bin/calver-bump.js');
 
@@ -98,10 +98,14 @@ test('CLI prints manual release commands by default', async () => {
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Next steps:/);
-  assert.match(result.stdout, /git add package\.json CHANGELOG\.md/);
-  assert.match(result.stdout, /git commit -m "chore\(release\): 26\.\d{4}"/);
-  assert.match(result.stdout, /git tag -a 26\.\d{4} -m "Release 26\.\d{4}"/);
+  assert.match(result.stdout, /create git commit chore\(release\): 26\.\d{4}/);
+  assert.match(result.stdout, /create git tag 26\.\d{4}/);
   assert.match(result.stdout, /git push --follow-tags origin main/);
+  const tag = execFileSync('git', ['tag', '--list', '26*'], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.match(tag, /^26\.\d{4}$/);
 });
 
 test('CLI reads .calverbumprc.json defaults', async () => {
@@ -120,18 +124,17 @@ test('CLI reads .calverbumprc.json defaults', async () => {
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /Git tag: \(not created\)/);
+  assert.match(result.stdout, /Git tag: v26\.\d{4}/);
   const tag = execFileSync('git', ['tag', '--list', 'v26*'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.equal(tag, '');
+  assert.match(tag, /^v26\.\d{4}$/);
   const changelog = execFileSync('git', ['status', '--porcelain'], {
     cwd: repo,
     encoding: 'utf8',
-  });
-  assert.match(changelog, /M package\.json/);
-  assert.match(changelog, /\?\? CHANGELOG\.md/);
+  }).trim();
+  assert.equal(changelog, '');
 });
 
 test('CLI prints and runs push command when --push is enabled', async () => {

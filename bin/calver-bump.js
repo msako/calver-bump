@@ -75,12 +75,15 @@ async function releaseOptions(args) {
   const changelogOnly = flag(args, '--changelog-only') ?? config.changelogOnly ?? false;
   const skipCommit = flag(args, '--skip-commit') ?? config.skipCommit ?? false;
   const push = flag(args, '--push') ?? config.push ?? false;
-  const tag = push || (flag(args, '--tag') ?? config.tag ?? false);
-  const commit = tag || (flag(args, '--commit') ?? config.commit ?? false);
+  const commitFlag = flag(args, '--commit');
+  const tagFlag = flag(args, '--tag');
+  const writesOnly = skipCommit || versionOnly || changelogOnly;
+  const tag = !writesOnly && (push || (tagFlag ?? config.tag ?? (commitFlag || config.commit ? false : true)));
+  const commit = tag || (!writesOnly && (commitFlag ?? config.commit ?? false));
   if (versionOnly && changelogOnly) {
     throw new Error('--version-only cannot be combined with --changelog-only.');
   }
-  if (skipCommit && (commit || tag || push)) {
+  if (skipCommit && (commitFlag || tagFlag || config.commit || config.tag || push)) {
     throw new Error('--skip-commit cannot be combined with --commit, --tag, or --push.');
   }
   return {
