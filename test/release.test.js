@@ -66,11 +66,11 @@ test('runRelease updates package.json, prepends changelog, commits, and tags', a
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
   assert.match(changelog, /^# Changelog\n\n## 26\.0529\n\n### Features\n\n- feat: initial app/);
 
-  const tag = execFileSync('git', ['tag', '--list', '26.0529'], {
+  const tag = execFileSync('git', ['tag', '--list', 'v26.0529'], {
     cwd: repo,
     encoding: 'utf8',
   }).trim();
-  assert.equal(tag, '26.0529');
+  assert.equal(tag, 'v26.0529');
 
   const subject = execFileSync('git', ['log', '-1', '--pretty=%s'], {
     cwd: repo,
@@ -102,7 +102,7 @@ test('runRelease can create a release commit and tag with unrelated dirty files'
     tag: true,
   });
 
-  assert.equal(result.createdTag, '26.0529');
+  assert.equal(result.createdTag, 'v26.0529');
   const status = execFileSync('git', ['status', '--porcelain'], {
     cwd: repo,
     encoding: 'utf8',
@@ -290,7 +290,7 @@ test('runRelease includes raw commit hashes for GitHub changelog entries', async
   );
   assert.match(
     changelog,
-    /### Full Changelog\n\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /### Full Changelog\n\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.v26\.0529\)/,
   );
 });
 
@@ -321,7 +321,7 @@ test('runRelease includes raw commit hashes for private GitLab-style remotes', a
   );
   assert.match(
     changelog,
-    /### Full Changelog\n\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /### Full Changelog\n\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.v26\.0529\)/,
   );
 });
 
@@ -345,7 +345,7 @@ test('runRelease includes raw GitHub pull request labels when commit subjects in
   );
   assert.match(
     changelog,
-    /### Full Changelog\n\n- #42 feat: add pull request links \(#42\)\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /### Full Changelog\n\n- #42 feat: add pull request links \(#42\)\n- \[Compare changes\]\(https:\/\/github\.com\/msako\/demo-app\/compare\/v1\.0\.0\.\.\.v26\.0529\)/,
   );
 });
 
@@ -392,7 +392,7 @@ test('runRelease includes raw GitLab merge request labels and dedupes the full c
   assert.equal(fullChangelogEntries.length, 2);
   assert.match(
     changelog,
-    /### Full Changelog\n\n- !77 fix\(review\): block rule-listed reviewers\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.26\.0529\)/,
+    /### Full Changelog\n\n- !77 fix\(review\): block rule-listed reviewers\n- \[Compare changes\]\(https:\/\/gitlab\.internal\.example\.com\/platform\/demo-app\/-\/compare\/v1\.0\.0\.\.\.v26\.0529\)/,
   );
 });
 
@@ -638,7 +638,7 @@ test('runRelease uses the previous changelog compare target for the new compare 
 
 test('runRelease rejects existing release tags before writing files', async () => {
   const repo = await makeRepo();
-  execFileSync('git', ['tag', '26.0529'], { cwd: repo });
+  execFileSync('git', ['tag', 'v26.0529'], { cwd: repo });
   const before = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
 
   await assert.rejects(
@@ -648,7 +648,7 @@ test('runRelease rejects existing release tags before writing files', async () =
       existingTags: [],
       tag: true,
     }),
-    /Git tag 26\.0529 already exists/,
+    /Git tag v26\.0529 already exists/,
   );
 
   const after = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();

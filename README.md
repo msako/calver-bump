@@ -2,16 +2,23 @@
 
 Release CLI for applications and internal tools that use readable CalVer versions.
 
-Default version and tag format:
+Default version format:
 
 ```text
 YY.MMDD
 ```
 
-Example:
+Default git tag format:
+
+```text
+vYY.MMDD
+```
+
+Example package version and git tag:
 
 ```text
 26.0529
+v26.0529
 ```
 
 ## What it does
@@ -20,7 +27,8 @@ Example:
 2. Updates `package-lock.json` or `npm-shrinkwrap.json` when present.
 3. Warns when `pnpm-lock.yaml` or `yarn.lock` is present, because those lockfiles do not store the root package version consistently.
 4. Creates or prepends a `CHANGELOG.md` entry from conventional commits since the nearest reachable tag.
-5. Prints the git commands needed to commit, tag, and push the reviewed release.
+5. Creates a release commit.
+6. Creates an annotated git tag.
 
 ## Usage
 
@@ -28,7 +36,7 @@ Example:
 npx calver-bump
 ```
 
-By default, `calver-bump` updates files only. Review `CHANGELOG.md`, then run the printed git commands when the release notes are correct.
+By default, `calver-bump` updates release files, creates a release commit, and creates an annotated `v`-prefixed git tag.
 
 Preview the planned release without writing files:
 
@@ -60,10 +68,10 @@ Use long CalVer instead:
 npx calver-bump --format long
 ```
 
-Create a `v`-prefixed git tag while keeping `package.json` unprefixed:
+Create an unprefixed git tag while keeping the default package version unchanged:
 
 ```bash
-npx calver-bump --tag-prefix v
+npx calver-bump --tag-prefix ""
 ```
 
 Push the release commit and annotated tag:
@@ -165,11 +173,12 @@ The package includes a manual GitHub Actions publish workflow. Run the `Publish`
 - Changelog entries fall back to commit hash links for GitHub and GitLab-style remotes when no pull/merge request reference is found.
 - Release entries include a `Full Changelog` section with a deduped list of pull/merge requests found in the release range, including the local commit title when available.
 - Later releases prepend only commits since the previous nearest reachable tag.
-- Plain `calver-bump` does not commit or tag by default; it prints the follow-up `git add`, `git commit`, `git tag`, and `git push --follow-tags` commands.
+- Plain `calver-bump` creates the release commit and annotated tag by default.
 - Use `--commit` to create only the release commit.
 - Use `--tag` to create the release commit and annotated tag.
+- Use `--skip-commit` to update files only without creating a release commit or tag.
 - Use `--push` to create the release commit, create the annotated tag, and push both.
 - Release tags are annotated so `git push --follow-tags <remote> <branch>` pushes them.
-- The working tree must be clean before creating a real release.
+- Unrelated dirty working-tree files do not block a release; only release files are staged.
 - Existing release tags are rejected before files are written.
 - If tag creation fails after the release commit, the CLI undoes its own commit and leaves the file changes in the working tree for inspection or recovery.

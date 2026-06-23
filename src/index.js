@@ -18,7 +18,7 @@ export async function planRelease(options = {}) {
     existingTags,
     format: options.format ?? 'short',
   });
-  const tag = `${options.tagPrefix ?? ''}${version}`;
+  const tag = `${options.tagPrefix ?? 'v'}${version}`;
   const notes = options.versionOnly
     ? null
     : await releaseNotes(cwd, { ...options, tag, existingChangelog: await readChangelog(cwd) });
@@ -123,16 +123,16 @@ async function prependChangelog(cwd, version, options = {}) {
   const notes = await releaseNotes(cwd, {
     ...options,
     existingChangelog: existing,
-    tag: `${options.tagPrefix ?? ''}${version}`,
+    tag: `${options.tagPrefix ?? 'v'}${version}`,
   });
   const heading = formatReleaseHeading({
     version,
     previousTag: notes.previousTag,
-    tag: options.tagPrefix ? `${options.tagPrefix}${version}` : version,
+    tag: `${options.tagPrefix ?? 'v'}${version}`,
     compareUrlBuilder: notes.compareUrlBuilder,
   });
   const compareUrl = notes.previousTag && notes.compareUrlBuilder
-    ? notes.compareUrlBuilder(notes.previousTag, options.tagPrefix ? `${options.tagPrefix}${version}` : version)
+    ? notes.compareUrlBuilder(notes.previousTag, `${options.tagPrefix ?? 'v'}${version}`)
     : null;
   const entry = `${heading}\n\n${formatReleaseNotes(notes.changes, options.changelogSections)}${formatFullChangelog(notes.requests, compareUrl)}\n`;
 

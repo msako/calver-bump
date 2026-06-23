@@ -99,7 +99,7 @@ async function releaseOptions(args) {
     from: value(args, '--from') ?? config.from,
     format: value(args, '--format') ?? config.format ?? 'short',
     remote: value(args, '--remote') ?? config.remote ?? 'origin',
-    tagPrefix: value(args, '--tag-prefix') ?? config.tagPrefix ?? '',
+    tagPrefix: value(args, '--tag-prefix') ?? config.tagPrefix ?? 'v',
     types: parseTypes(value(args, '--types')) ?? config.types,
     changelogSections: config.changelogSections,
   };
@@ -207,7 +207,7 @@ function helpText() {
 Options:
   --dry-run              Preview the release without writing files.
   --format <name>        Version format: short, compact, or long.
-  --tag-prefix <prefix>  Prefix the git tag without changing package.json.
+  --tag-prefix <prefix>  Prefix the git tag without changing package.json (default: v).
   --types <list>         Comma-separated conventional commit types to include.
   --from <tag>           Use an explicit changelog base tag.
   --no-fetch             Use local tags only; do not fetch remote tags.
