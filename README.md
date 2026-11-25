@@ -38,7 +38,7 @@ npx calver-bump
 
 By default, `calver-bump` updates release files, creates a release commit, and creates an annotated `v`-prefixed git tag.
 After creating the tag on a branch, `calver-bump` asks whether to push the branch and tag to the configured remote when both input and output are terminals. Press Enter to keep the release local and see the next steps.
-The push and the printed command use the release commit and annotated tag captured before the prompt. Git updates the destination branch and tag atomically, so the remote must support atomic pushes.
+The push and the printed command use the release commit and annotated tag captured before the prompt. If the remote's push URLs change during confirmation, the CLI stops and keeps the release local. Git pushes the destination branch and tag atomically with submodule recursion disabled, so the remote must support atomic pushes.
 
 Preview the planned release without writing files:
 
@@ -171,7 +171,7 @@ The package includes a manual GitHub Actions publish workflow. Run the `Publish`
 - The optional `long` format is `YYYY.MM.DD` for the first release of the day, then `YYYY.MM.DD.1`, `YYYY.MM.DD.2`, etc.
 - Changelog release headings use the CalVer version only and do not append a separate `YYYY-MM-DD` date.
 - The next sequence number uses existing tags with the configured prefix, the `v` prefix, or an empty prefix.
-- The CLI fetches remote tags before choosing the version and disables pruning for that fetch. Use `--no-fetch` to use local tags only.
+- The CLI imports new published tags before choosing the version. Use `--no-fetch` to use local tags only.
 - Changelog ranges start from the nearest reachable tag, even when it is not a CalVer tag.
 - Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.
 - Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes` by default. Use `changelogSections` to assign additional conventional commit types to named sections.
@@ -184,7 +184,7 @@ The package includes a manual GitHub Actions publish workflow. Run the `Publish`
 - Use `--tag` to create the release commit and annotated tag.
 - Use `--skip-commit` to update files only without creating a release commit or tag.
 - Use `--push` from an attached branch to push that branch and the exact annotated release tag.
-- A release that creates a commit requires you to finish or abort an in-progress merge first. Previews and file-only modes remain available during a merge.
+- A release that creates a commit requires you to finish or abort an in-progress merge or cherry-pick first. Previews and file-only modes remain available during either operation.
 - Release commits include only the files listed in the release plan. Unrelated staged changes stay staged.
 - Existing release tags are rejected before files are written.
 - If tag creation fails after the release commit, the CLI undoes its own commit and leaves the file changes in the working tree for inspection or recovery.

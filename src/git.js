@@ -19,7 +19,7 @@ export function releaseGitCommands({ version, files, remote, branch, tag }, snap
     commit: ['commit', '--only', '-m', `chore(release): ${version}`, '--', ...files],
     tag: ['tag', '-a', tag, '-m', `Release ${version}`],
     push: branch === 'HEAD' ? null : [
-      'push', '--atomic', '--no-follow-tags', '--', remote,
+      'push', '--atomic', '--no-follow-tags', '--no-recurse-submodules', '--', remote,
       `${branchSource}:${branchRef}`, `${tagSource}:${tagRef}`,
     ],
   };
@@ -57,10 +57,22 @@ export async function getRemoteUrl(cwd, remote) {
   }
 }
 
+export async function getRemotePushUrls(cwd, remote) {
+  try {
+    const { stdout } = await git(cwd, ['remote', 'get-url', '--push', '--all', '--', remote]);
+    return stdout.trim() ? stdout : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function tryFetchTags(cwd, remote) {
   try {
     await git(cwd, ['remote', 'get-url', remote]);
-    await git(cwd, ['fetch', '--tags', '--no-prune', '--no-prune-tags', remote]);
+    await git(cwd, [
+      'fetch', '--no-tags', '--no-prune', '--no-prune-tags', '--no-write-fetch-head',
+      '--no-recurse-submodules', '--refmap=', '--', remote, 'refs/tags/*:refs/tags/*',
+    ]);
   } catch {}
 }
 
@@ -80,17 +92,19 @@ export async function assertCleanWorktree(cwd) {
   }
 }
 
-export async function assertNoMergeInProgress(cwd) {
-  const { stdout } = await git(cwd, ['rev-parse', '--git-path', 'MERGE_HEAD']);
-  try {
-    await lstat(resolve(cwd, stdout.trimEnd()));
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return;
+export async function assertNoMergeOrCherryPickInProgress(cwd) {
+  for (const [ref, operation] of [['MERGE_HEAD', 'merge'], ['CHERRY_PICK_HEAD', 'cherry-pick']]) {
+    const { stdout } = await git(cwd, ['rev-parse', '--git-path', ref]);
+    try {
+      await lstat(resolve(cwd, stdout.trimEnd()));
+    } catch (error) {
+      if (error.code === 'ENOENT') {
+        continue;
+      }
+      throw error;
     }
-    throw error;
+    throw new Error(`A Git ${operation} is in progress. Finish or abort the ${operation} before creating a release commit.`);
   }
-  throw new Error('A Git merge is in progress. Finish or abort the merge before creating a release commit.');
 }
 
 export async function tagExists(cwd, tag) {

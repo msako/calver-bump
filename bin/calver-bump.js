@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 
 import { runRelease } from '../src/index.js';
 import { assertFormat } from '../src/calver.js';
-import { getRemoteUrl, git, releaseGitCommands, releaseSnapshot } from '../src/git.js';
+import { getRemotePushUrls, git, releaseGitCommands, releaseSnapshot } from '../src/git.js';
 
 const OPTIONS = {
   'changelog-only': { type: 'boolean' },
@@ -56,11 +56,7 @@ try {
     const commands = releaseGitCommands(result, snapshot);
     console.log('');
     const shouldPush = result.createdTag && commands.push && (
-      options.push || (
-        process.stdin.isTTY && process.stdout.isTTY &&
-        await getRemoteUrl(process.cwd(), result.remote) &&
-        await confirmPush(result)
-      )
+      options.push || (process.stdin.isTTY && process.stdout.isTTY && await confirmRemotePush(result))
     );
     if (shouldPush) {
       console.log(`Running: ${formatGitCommand(commands.push)}`);
@@ -75,6 +71,18 @@ try {
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
+}
+
+async function confirmRemotePush(result) {
+  const cwd = process.cwd();
+  const urls = await getRemotePushUrls(cwd, result.remote);
+  if (!urls || !await confirmPush(result)) {
+    return false;
+  }
+  if (urls !== await getRemotePushUrls(cwd, result.remote)) {
+    throw new Error('The push destination changed during confirmation. The release commit and tag are local.');
+  }
+  return true;
 }
 
 function confirmPush({ branch, createdTag, remote }) {

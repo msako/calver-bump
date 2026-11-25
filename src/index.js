@@ -6,7 +6,15 @@ import {
   releaseWarnings,
   writeReleaseFiles,
 } from './files.js';
-import { assertNoMergeInProgress, assertTagAvailable, currentBranch, git, gitLines, releaseGitCommands, tryFetchTags } from './git.js';
+import {
+  assertNoMergeOrCherryPickInProgress,
+  assertTagAvailable,
+  currentBranch,
+  git,
+  gitLines,
+  releaseGitCommands,
+  tryFetchTags,
+} from './git.js';
 
 export async function planRelease(options = {}) {
   const { plan } = await prepareRelease(options.cwd ?? process.cwd(), options);
@@ -82,7 +90,7 @@ export async function runRelease(options = {}) {
     await assertTagAvailable(cwd, plan.tag);
   }
   if (commit) {
-    await assertNoMergeInProgress(cwd);
+    await assertNoMergeOrCherryPickInProgress(cwd);
   }
 
   await writeReleaseFiles(cwd, writes);
