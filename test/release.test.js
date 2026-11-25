@@ -49,6 +49,26 @@ test('runRelease supports tag prefixes without changing package.json version', a
   assert.equal(tag, 'v26.0529');
 });
 
+test('runRelease sequences custom and legacy tag prefixes on the same day', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['tag', 'v26.0529.1'], { cwd: repo });
+  execFileSync('git', ['tag', 'release-26.0529.9'], { cwd: repo });
+  const options = {
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+    tag: true,
+    tagPrefix: 'release.',
+  };
+
+  const first = await runRelease(options);
+  assert.equal(first.createdTag, 'release.26.0529.2');
+
+  const second = await runRelease(options);
+  assert.equal(second.createdTag, 'release.26.0529.3');
+  const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
+  assert.equal(pkg.version, '26.0529.3');
+});
+
 test('runRelease updates package.json, prepends changelog, commits, and tags', async () => {
   const repo = await makeRepo();
 
@@ -92,9 +112,11 @@ test('runRelease returns the current branch for push guidance', async () => {
   assert.equal(result.branch, 'release/train');
 });
 
-test('runRelease can create a release commit and tag with unrelated dirty files', async () => {
+test('runRelease leaves unrelated staged and untracked files out of the release commit', async () => {
   const repo = await makeRepo();
   await writeFile(path.join(repo, 'scratch.txt'), 'work in progress\n');
+  await writeFile(path.join(repo, 'staged.txt'), 'staged work\n');
+  execFileSync('git', ['add', 'staged.txt'], { cwd: repo });
 
   const result = await runRelease({
     cwd: repo,
@@ -103,10 +125,16 @@ test('runRelease can create a release commit and tag with unrelated dirty files'
   });
 
   assert.equal(result.createdTag, 'v26.0529');
+  const releasedFiles = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', result.createdTag], {
+    cwd: repo,
+    encoding: 'utf8',
+  }).trim();
+  assert.equal(releasedFiles, 'CHANGELOG.md\npackage.json');
   const status = execFileSync('git', ['status', '--porcelain'], {
     cwd: repo,
     encoding: 'utf8',
   });
+  assert.match(status, /^A  staged\.txt$/m);
   assert.match(status, /\?\? scratch\.txt/);
   assert.doesNotMatch(status, /package\.json/);
   assert.doesNotMatch(status, /CHANGELOG\.md/);
@@ -123,6 +151,17 @@ test('runRelease updates package-lock.json when it exists', async () => {
   const lock = JSON.parse(await readFile(path.join(repo, 'package-lock.json'), 'utf8'));
   assert.equal(lock.version, '26.0529');
   assert.equal(lock.packages[''].version, '26.0529');
+});
+
+test('release preparation rejects malformed lockfiles before changing package.json', async () => {
+  const repo = await makeRepo();
+  await writeFile(path.join(repo, 'package-lock.json'), '{"version":');
+  const options = { cwd: repo, date: new Date('2026-05-29T12:00:00-07:00'), tag: true };
+
+  await assert.rejects(() => runRelease(options), SyntaxError);
+  const pkg = JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8'));
+  assert.equal(pkg.version, '0.0.0');
+  await assert.rejects(() => runRelease({ ...options, dryRun: true }), SyntaxError);
 });
 
 test('planRelease warns about lockfiles that do not carry root package versions consistently', async () => {
@@ -349,6 +388,38 @@ test('runRelease includes raw GitHub pull request labels when commit subjects in
   );
 });
 
+test('runRelease uses the merged GitHub pull request in both changelog sections', async () => {
+  const repo = await makeRepo();
+  execFileSync('git', ['tag', 'v1.0.0'], { cwd: repo });
+  execFileSync('git', ['checkout', '-b', 'fix'], { cwd: repo });
+  execFileSync('git', ['commit', '--allow-empty', '-m', 'Handle duplicate requests'], { cwd: repo });
+  execFileSync('git', ['checkout', 'main'], { cwd: repo });
+  execFileSync('git', [
+    'merge',
+    '--no-ff',
+    '-m',
+    'Merge pull request #42 from example/branch',
+    '-m',
+    'fix: handle duplicate requests mentioned in #12',
+    'fix',
+  ], { cwd: repo });
+
+  await runRelease({
+    cwd: repo,
+    date: new Date('2026-05-29T12:00:00-07:00'),
+  });
+
+  const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
+  assert.match(
+    changelog,
+    /### Fixes\n\n- fix: handle duplicate requests mentioned in #12 \([a-f0-9]{7}, #42\)/,
+  );
+  assert.match(
+    changelog,
+    /### Full Changelog\n\n- #42 fix: handle duplicate requests mentioned in #12\n/,
+  );
+});
+
 test('runRelease includes raw GitLab merge request labels and dedupes the full changelog', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@gitlab.internal.example.com:platform/demo-app.git'], { cwd: repo });
@@ -546,6 +617,24 @@ test('runRelease fetches remote tags before choosing the changelog base', async 
   const latestEntry = changelog.split('## [1.35.0]')[0];
   assert.match(latestEntry, /- fix: unreleased after remote tag/);
   assert.doesNotMatch(latestEntry, /feat: already in remote tagged release/);
+});
+
+test('the first release preview uses remote tags to choose the next same-day version', async () => {
+  const repo = await makeRepo();
+  const remote = await makeBareRepo();
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo });
+  execFileSync('git', ['tag', 'v26.0529'], { cwd: repo });
+  execFileSync('git', ['push', 'origin', 'main', '--tags'], { cwd: repo });
+  execFileSync('git', ['tag', '-d', 'v26.0529'], { cwd: repo });
+  const options = { cwd: repo, date: new Date('2026-05-29T12:00:00-07:00'), tag: true };
+
+  const preview = await runRelease({ ...options, dryRun: true });
+  assert.equal(preview.tag, 'v26.0529.1');
+  assert.equal(preview.previousTag, 'v26.0529');
+
+  const release = await runRelease(options);
+  assert.equal(release.createdTag, preview.tag);
+  assert.equal(release.range, preview.range);
 });
 
 test('runRelease can skip remote tag fetches', async () => {

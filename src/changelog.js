@@ -1,4 +1,4 @@
-import { fetchTags, getRemoteUrl, gitCommits, latestReachableTag, tagExists } from './git.js';
+import { getRemoteUrl, gitCommits, latestReachableTag, tagExists } from './git.js';
 
 const DEFAULT_TYPES = ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
 const DEFAULT_CHANGELOG_SECTIONS = {
@@ -7,32 +7,19 @@ const DEFAULT_CHANGELOG_SECTIONS = {
 };
 
 export async function releaseNotes(cwd, options = {}) {
-  if (!options.noFetch) {
-    await fetchTags(cwd, options.remote ?? 'origin');
-  }
-  const latestTag = options.from ?? await latestReleaseTag(cwd, options.existingChangelog ?? '');
+  const existingChangelog = options.existingChangelog ?? '';
+  const latestTag = options.from ?? await latestReleaseTag(cwd, existingChangelog);
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
-  const commits = await gitCommits(cwd, range);
+  const commits = (await gitCommits(cwd, range))
+    .map(parseCommit)
+    .filter((commit) => !commit.isRelease);
   const remoteUrl = await getRemoteUrl(cwd, options.remote ?? 'origin');
-  const commitUrlBuilder = remoteUrl ? buildCommitUrlBuilder(remoteUrl) : null;
   const compareUrlBuilder = remoteUrl ? buildCompareUrlBuilder(remoteUrl) : null;
-  const requestUrlBuilder = remoteUrl ? buildRequestUrlBuilder(remoteUrl) : null;
   const allowedTypes = options.types ?? DEFAULT_TYPES;
   const conventionalCommits = dedupeConventionalChanges(commits
-    .map((commit) => ({ ...commit, subject: conventionalSubjectForCommit(commit) ?? commit.subject }))
-    .filter((commit) => isConventionalCommit(commit.subject))
-    .filter((commit) => !isReleaseCommit(commit.subject))
-    .filter((commit) => allowedTypes.includes(conventionalType(commit.subject)))
-    .filter((commit) => !isCommitInChangelog(commit, options.existingChangelog ?? ''))
-    .map((commit) => ({
-      ...commit,
-      request: requestForCommit(commit, requestUrlBuilder),
-      url: commitUrlBuilder ? commitUrlBuilder(commit.hash) : null,
-    })));
-  const requests = uniqueRequests(commits
-    .filter((commit) => !isReleaseCommit(conventionalSubjectForCommit(commit) ?? commit.subject))
-    .map((commit) => requestForCommit(commit, requestUrlBuilder))
-    .filter(Boolean));
+    .filter((commit) => commit.type && allowedTypes.includes(commit.type))
+    .filter((commit) => !isCommitInChangelog(commit, existingChangelog)));
+  const requests = uniqueRequests(commits.map((commit) => commit.request).filter(Boolean));
   return {
     previousTag: latestTag,
     range: latestTag ? `${latestTag}..HEAD` : 'HEAD',
@@ -42,8 +29,17 @@ export async function releaseNotes(cwd, options = {}) {
   };
 }
 
-export function formatReleaseHeading({ version, previousTag, tag, compareUrlBuilder }) {
-  return `## ${version}`;
+export function renderChangelog(existing, { version, tag, notes, changelogSections }) {
+  const compareUrl = notes.previousTag && notes.compareUrlBuilder
+    ? notes.compareUrlBuilder(notes.previousTag, tag)
+    : null;
+  const changes = formatReleaseNotes(notes.changes, changelogSections);
+  const fullChangelog = formatFullChangelog(notes.requests, compareUrl);
+  const entry = `## ${version}\n\n${changes}${fullChangelog}\n`;
+
+  return existing.trim().startsWith('# Changelog')
+    ? existing.replace(/^# Changelog\s*/, `# Changelog\n\n${entry}\n`)
+    : `# Changelog\n\n${entry}\n${existing}`;
 }
 
 export function formatReleaseNotes(changes, sectionConfig = {}) {
@@ -55,7 +51,7 @@ export function formatReleaseNotes(changes, sectionConfig = {}) {
   const grouped = new Map();
   const other = [];
   for (const change of changes) {
-    const heading = sectionMap[conventionalType(change.subject)];
+    const heading = sectionMap[change.type ?? conventionalType(change.subject)];
     if (!heading) {
       other.push(change);
       continue;
@@ -102,22 +98,34 @@ function isCommitInChangelog(commit, changelog) {
   return changelog.includes(commit.hash) || changelog.includes(commit.hash.slice(0, 7));
 }
 
-function isConventionalCommit(subject) {
-  return /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: .+/.test(subject);
-}
+function parseCommit(commit) {
+  const message = `${commit.subject}\n${commit.body ?? ''}`;
+  const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
+  let subject = commit.subject;
+  let type;
+  for (const line of lines) {
+    const candidateType = conventionalType(line);
+    if (DEFAULT_TYPES.includes(candidateType)) {
+      subject = line;
+      type = candidateType;
+      break;
+    }
+  }
 
-function isReleaseCommit(subject) {
-  return /^chore\(release\):\s.+/.test(subject);
-}
+  const request = parseRequestReference(message);
+  if (request) {
+    request.title = type
+      ? subject
+      : lines.find((line) => !parseRequestReference(line) && !/^Merge\b/i.test(line)) ?? null;
+  }
 
-function conventionalSubjectForCommit(commit) {
-  return commitLines(commit).find((line) => isConventionalCommit(line)) ?? null;
-}
-
-function commitLines(commit) {
-  return [commit.subject, ...(commit.body ?? '').split('\n')]
-    .map((line) => line.trim())
-    .filter(Boolean);
+  return {
+    ...commit,
+    subject,
+    type,
+    isRelease: /^chore\(release\):\s.+/.test(subject),
+    request,
+  };
 }
 
 function dedupeConventionalChanges(changes) {
@@ -141,37 +149,16 @@ function conventionalType(subject) {
 
 function formatCommitEntry(commit) {
   const shortHash = commit.hash.slice(0, 7);
-  const links = [
+  const references = [
     shortHash,
-    commit.request ? formatRequestLink(commit.request) : null,
+    commit.request?.label,
   ].filter(Boolean);
-  const suffix = ` (${links.join(', ')})`;
+  const suffix = ` (${references.join(', ')})`;
   return `${commit.subject}${suffix}`;
 }
 
-function formatRequestLink(request) {
-  return request.label;
-}
-
 function formatRequestEntry(request) {
-  return request.title ? `${formatRequestLink(request)} ${request.title}` : formatRequestLink(request);
-}
-
-function buildCommitUrlBuilder(remote) {
-  const parsed = parseGitRemote(remote);
-  if (!parsed) {
-    return null;
-  }
-
-  const baseUrl = `https://${parsed.host}/${parsed.repo}`;
-  if (parsed.host === 'github.com') {
-    return (hash) => `${baseUrl}/commit/${hash}`;
-  }
-  if (parsed.host.includes('gitlab')) {
-    return (hash) => `${baseUrl}/-/commit/${hash}`;
-  }
-
-  return null;
+  return request.title ? `${request.label} ${request.title}` : request.label;
 }
 
 function buildCompareUrlBuilder(remote) {
@@ -189,45 +176,6 @@ function buildCompareUrlBuilder(remote) {
   }
 
   return null;
-}
-
-function buildRequestUrlBuilder(remote) {
-  const parsed = parseGitRemote(remote);
-  if (!parsed) {
-    return null;
-  }
-
-  const baseUrl = `https://${parsed.host}/${parsed.repo}`;
-  if (parsed.host === 'github.com') {
-    return (request) => request.provider === 'github' ? `${baseUrl}/pull/${request.number}` : null;
-  }
-  if (parsed.host.includes('gitlab')) {
-    return (request) => request.provider === 'gitlab' ? `${baseUrl}/-/merge_requests/${request.number}` : null;
-  }
-
-  return null;
-}
-
-function requestForCommit(commit, requestUrlBuilder) {
-  const request = parseRequestReference(`${commit.subject}\n${commit.body ?? ''}`);
-  if (!request) {
-    return null;
-  }
-  return {
-    ...request,
-    title: requestTitleForCommit(commit),
-    url: requestUrlBuilder ? requestUrlBuilder(request) : null,
-  };
-}
-
-function requestTitleForCommit(commit) {
-  const conventionalSubject = conventionalSubjectForCommit(commit);
-  if (conventionalSubject) {
-    return conventionalSubject;
-  }
-
-  return commitLines(commit)
-    .find((line) => line && !parseRequestReference(line) && !/^Merge\b/i.test(line)) ?? null;
 }
 
 function parseRequestReference(message) {

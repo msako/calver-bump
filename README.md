@@ -37,6 +37,8 @@ npx calver-bump
 ```
 
 By default, `calver-bump` updates release files, creates a release commit, and creates an annotated `v`-prefixed git tag.
+After creating the tag on a branch, `calver-bump` asks whether to push the branch and tag to the configured remote when both input and output are terminals. Press Enter to keep the release local and see the next steps.
+The push and the printed command use the release commit and annotated tag captured before the prompt. If the remote's push URLs change during confirmation, the CLI stops and keeps the release local. Git pushes the destination branch and tag atomically with submodule recursion disabled, so the remote must support atomic pushes.
 
 Preview the planned release without writing files:
 
@@ -74,7 +76,7 @@ Create an unprefixed git tag while keeping the default package version unchanged
 npx calver-bump --tag-prefix ""
 ```
 
-Push the release commit and annotated tag:
+Push the release branch and annotated tag without confirmation.
 
 ```bash
 npx calver-bump --push
@@ -151,6 +153,9 @@ Project defaults can be stored in `.calverbumprc.json`:
 }
 ```
 
+Explicit `--commit`, `--tag`, `--push`, and `--skip-commit` flags override the configured Git action.
+Set `"push": true` to push the release without confirmation.
+
 ## Runtime support
 
 `calver-bump` supports Node.js LTS lines only. The current supported runtime range is Node.js 22 and Node.js 24.
@@ -165,20 +170,21 @@ The package includes a manual GitHub Actions publish workflow. Run the `Publish`
 - The optional `compact` format is `YYMMDD` for the first release of the day, then `YYMMDD.1`, `YYMMDD.2`, etc.
 - The optional `long` format is `YYYY.MM.DD` for the first release of the day, then `YYYY.MM.DD.1`, `YYYY.MM.DD.2`, etc.
 - Changelog release headings use the CalVer version only and do not append a separate `YYYY-MM-DD` date.
-- Existing `v`-prefixed tags are considered when calculating the next sequence number.
+- The next sequence number uses existing tags with the configured prefix, the `v` prefix, or an empty prefix.
+- The CLI imports new published tags before choosing the version. Use `--no-fetch` to use local tags only.
 - Changelog ranges start from the nearest reachable tag, even when it is not a CalVer tag.
 - Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.
 - Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes` by default. Use `changelogSections` to assign additional conventional commit types to named sections.
-- Changelog entries link to GitHub pull requests or GitLab merge requests when the local git message includes references such as `#123`, `Merge pull request #123`, `!123`, or `See merge request group/project!123`.
-- Changelog entries fall back to commit hash links for GitHub and GitLab-style remotes when no pull/merge request reference is found.
-- Release entries include a `Full Changelog` section with a deduped list of pull/merge requests found in the release range, including the local commit title when available.
+- Changelog entries show a seven-character commit hash in plain text. If the commit message includes a request reference, the entry also shows its label, such as `#123` or `!123`.
+- The `Full Changelog` section lists each pull request or merge request once, with its commit title when available.
+- For GitHub and GitLab remotes, the `Full Changelog` section includes a `Compare changes` link when the release has a base tag.
 - Later releases prepend only commits since the previous nearest reachable tag.
 - Plain `calver-bump` creates the release commit and annotated tag by default.
 - Use `--commit` to create only the release commit.
 - Use `--tag` to create the release commit and annotated tag.
 - Use `--skip-commit` to update files only without creating a release commit or tag.
-- Use `--push` to create the release commit, create the annotated tag, and push both.
-- Release tags are annotated so `git push --follow-tags <remote> <branch>` pushes them.
-- Unrelated dirty working-tree files do not block a release; only release files are staged.
+- Use `--push` from an attached branch to push that branch and the exact annotated release tag.
+- A release that creates a commit requires you to finish or abort an in-progress merge or cherry-pick first. Previews and file-only modes remain available during either operation.
+- Release commits include only the files listed in the release plan. Unrelated staged changes stay staged.
 - Existing release tags are rejected before files are written.
 - If tag creation fails after the release commit, the CLI undoes its own commit and leaves the file changes in the working tree for inspection or recovery.
