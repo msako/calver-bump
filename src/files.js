@@ -1,19 +1,15 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export async function updatePackageVersion(cwd, version) {
-  const packagePath = path.join(cwd, 'package.json');
-  const pkg = JSON.parse(await readFile(packagePath, 'utf8'));
+export async function prepareVersionFiles(cwd, version) {
+  const pkg = JSON.parse(await readFile(path.join(cwd, 'package.json'), 'utf8'));
   pkg.version = version;
-  await writeFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
-}
+  const writes = [{ file: 'package.json', contents: `${JSON.stringify(pkg, null, 2)}\n` }];
 
-export async function updatePackageLock(cwd, version) {
-  for (const fileName of ['package-lock.json', 'npm-shrinkwrap.json']) {
-    const filePath = path.join(cwd, fileName);
+  for (const file of ['package-lock.json', 'npm-shrinkwrap.json']) {
     let lock;
     try {
-      lock = JSON.parse(await readFile(filePath, 'utf8'));
+      lock = JSON.parse(await readFile(path.join(cwd, file), 'utf8'));
     } catch (error) {
       if (error.code === 'ENOENT') continue;
       throw error;
@@ -26,25 +22,15 @@ export async function updatePackageLock(cwd, version) {
       lock.packages[''].version = version;
     }
 
-    await writeFile(filePath, `${JSON.stringify(lock, null, 2)}\n`);
+    writes.push({ file, contents: `${JSON.stringify(lock, null, 2)}\n` });
   }
+  return writes;
 }
 
-export async function releaseFiles(cwd, options = {}) {
-  const candidates = [];
-  const files = [];
-  if (options.version !== false) {
-    candidates.push('package.json', 'package-lock.json', 'npm-shrinkwrap.json');
+export async function writeReleaseFiles(cwd, writes) {
+  for (const { file, contents } of writes) {
+    await writeFile(path.join(cwd, file), contents);
   }
-  for (const candidate of candidates) {
-    if (await fileExists(path.join(cwd, candidate))) {
-      files.push(candidate);
-    }
-  }
-  if (options.changelog !== false) {
-    files.push('CHANGELOG.md');
-  }
-  return files;
 }
 
 export async function releaseWarnings(cwd, options = {}) {
@@ -67,10 +53,6 @@ export async function readChangelog(cwd) {
     if (error.code === 'ENOENT') return '';
     throw error;
   }
-}
-
-export async function writeChangelog(cwd, body) {
-  await writeFile(path.join(cwd, 'CHANGELOG.md'), body);
 }
 
 async function fileExists(filePath) {

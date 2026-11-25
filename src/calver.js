@@ -1,8 +1,9 @@
-export function nextCalVer({ date = new Date(), existingTags = [], format = 'short' } = {}) {
+export function nextCalVer({ date = new Date(), existingTags = [], format = 'short', tagPrefix = 'v' } = {}) {
   assertFormat(format);
   const parts = dateParts(date);
   const prefix = calVerPrefix(parts, format);
-  const matcher = new RegExp(`^v?${escapeRegExp(prefix)}(?:\\.(\\d+))?$`);
+  const tagPrefixes = [...new Set(['', 'v', tagPrefix])].map(escapeRegExp).join('|');
+  const matcher = new RegExp(`^(?:${tagPrefixes})${escapeRegExp(prefix)}(?:\\.(\\d+))?$`);
   const releaseState = existingTags.reduce((state, tag) => {
     const match = matcher.exec(tag.trim());
     if (!match) return state;

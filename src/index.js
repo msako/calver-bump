@@ -1,40 +1,54 @@
 import { nextCalVer } from './calver.js';
-import { formatFullChangelog, formatReleaseHeading, formatReleaseNotes, releaseNotes } from './changelog.js';
+import { releaseNotes, renderChangelog } from './changelog.js';
 import {
+  prepareVersionFiles,
   readChangelog,
-  releaseFiles,
   releaseWarnings,
-  updatePackageLock,
-  updatePackageVersion,
-  writeChangelog,
+  writeReleaseFiles,
 } from './files.js';
-import { assertTagAvailable, currentBranch, git, gitLines } from './git.js';
+import { assertTagAvailable, currentBranch, git, gitLines, releaseGitCommands, tryFetchTags } from './git.js';
 
 export async function planRelease(options = {}) {
-  const cwd = options.cwd ?? process.cwd();
+  const { plan } = await prepareRelease(options.cwd ?? process.cwd(), options);
+  return plan;
+}
+
+async function prepareRelease(cwd, options) {
+  const remote = options.remote ?? 'origin';
+  if (!options.noFetch) {
+    await tryFetchTags(cwd, remote);
+  }
   const existingTags = options.existingTags ?? await gitLines(cwd, ['tag', '--list']);
+  const tagPrefix = String(options.tagPrefix ?? 'v');
   const version = nextCalVer({
     date: options.date,
     existingTags,
     format: options.format ?? 'short',
+    tagPrefix,
   });
-  const tag = `${options.tagPrefix ?? 'v'}${version}`;
-  const notes = options.versionOnly
-    ? null
-    : await releaseNotes(cwd, { ...options, tag, existingChangelog: await readChangelog(cwd) });
-  const files = await releaseFiles(cwd, {
-    version: !options.changelogOnly,
-    changelog: !options.versionOnly,
-  });
+  const tag = `${tagPrefix}${version}`;
+  const writes = options.changelogOnly ? [] : await prepareVersionFiles(cwd, version);
+  let notes = null;
+  if (!options.versionOnly) {
+    const existingChangelog = await readChangelog(cwd);
+    notes = await releaseNotes(cwd, { ...options, existingChangelog });
+    writes.push({
+      file: 'CHANGELOG.md',
+      contents: renderChangelog(existingChangelog, { version, tag, notes, changelogSections: options.changelogSections }),
+    });
+  }
+  const files = writes.map(({ file }) => file);
   const warnings = await releaseWarnings(cwd, {
     updatesVersion: !options.changelogOnly,
   });
+  const commit = createsCommit(options);
+  const tagRelease = commit && Boolean(options.tag || options.push);
 
-  return {
+  const plan = {
     version,
     tag,
     branch: await currentBranch(cwd),
-    remote: options.remote ?? 'origin',
+    remote,
     previousTag: notes?.previousTag ?? null,
     range: notes?.range ?? null,
     files,
@@ -42,51 +56,50 @@ export async function planRelease(options = {}) {
     actions: releaseActions({
       version,
       tag,
-      commit: createsCommit(options),
-      tagRelease: createsTag(options),
+      commit,
+      tagRelease,
       versionOnly: options.versionOnly,
       changelogOnly: options.changelogOnly,
       files,
     }),
   };
+  return { plan, writes, commit, tagRelease };
 }
 
 export async function runRelease(options = {}) {
   const cwd = options.cwd ?? process.cwd();
-  const plan = await planRelease(options);
+  const { plan, writes, commit, tagRelease } = await prepareRelease(cwd, options);
 
   if (options.dryRun) {
     return plan;
   }
 
-  if (createsTag(options)) {
+  const commands = releaseGitCommands(plan);
+  if (options.push && tagRelease && !commands.push) {
+    throw new Error('Cannot push a release from detached HEAD. Check out a branch first.');
+  }
+  if (tagRelease) {
     await assertTagAvailable(cwd, plan.tag);
   }
 
-  if (!options.changelogOnly) {
-    await updatePackageVersion(cwd, plan.version);
-    await updatePackageLock(cwd, plan.version);
-  }
-  if (!options.versionOnly) {
-    await prependChangelog(cwd, plan.version, options);
-  }
+  await writeReleaseFiles(cwd, writes);
 
-  if (!createsCommit(options)) {
+  if (!commit) {
     return { ...plan, createdTag: null };
   }
 
-  await git(cwd, ['add', ...await releaseFiles(cwd)]);
-  await git(cwd, ['commit', '-m', `chore(release): ${plan.version}`]);
-  if (createsTag(options)) {
+  await git(cwd, commands.add);
+  await git(cwd, commands.commit);
+  if (tagRelease) {
     try {
-      await git(cwd, ['tag', '-a', plan.tag, '-m', `Release ${plan.version}`]);
+      await git(cwd, commands.tag);
     } catch (error) {
       await git(cwd, ['reset', '--soft', 'HEAD~1']);
       throw new Error(`Failed to create git tag ${plan.tag}; release commit was undone and file changes were left in the working tree. ${error.message}`);
     }
   }
 
-  return createsTag(options) ? { ...plan, createdTag: plan.tag } : { ...plan, createdTag: null };
+  return { ...plan, createdTag: tagRelease ? plan.tag : null };
 }
 
 function releaseActions({ version, tag, commit = false, tagRelease = false, versionOnly = false, changelogOnly = false, files = [] }) {
@@ -111,34 +124,4 @@ function releaseActions({ version, tag, commit = false, tagRelease = false, vers
 
 function createsCommit(options) {
   return Boolean(options.commit || options.tag || options.push) && !options.skipCommit && !options.versionOnly && !options.changelogOnly;
-}
-
-function createsTag(options) {
-  return Boolean(options.tag || options.push) && createsCommit(options);
-}
-
-async function prependChangelog(cwd, version, options = {}) {
-  const existing = await readChangelog(cwd);
-
-  const notes = await releaseNotes(cwd, {
-    ...options,
-    existingChangelog: existing,
-    tag: `${options.tagPrefix ?? 'v'}${version}`,
-  });
-  const heading = formatReleaseHeading({
-    version,
-    previousTag: notes.previousTag,
-    tag: `${options.tagPrefix ?? 'v'}${version}`,
-    compareUrlBuilder: notes.compareUrlBuilder,
-  });
-  const compareUrl = notes.previousTag && notes.compareUrlBuilder
-    ? notes.compareUrlBuilder(notes.previousTag, `${options.tagPrefix ?? 'v'}${version}`)
-    : null;
-  const entry = `${heading}\n\n${formatReleaseNotes(notes.changes, options.changelogSections)}${formatFullChangelog(notes.requests, compareUrl)}\n`;
-
-  const body = existing.trim().startsWith('# Changelog')
-    ? existing.replace(/^# Changelog\s*/, `# Changelog\n\n${entry}\n`)
-    : `# Changelog\n\n${entry}\n${existing}`;
-
-  await writeChangelog(cwd, body);
 }

@@ -1,43 +1,42 @@
 #!/usr/bin/env node
-import { execFile as execFileCallback } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { promisify } from 'node:util';
+import { parseArgs } from 'node:util';
 
 import { runRelease } from '../src/index.js';
 import { assertFormat } from '../src/calver.js';
+import { git, releaseGitCommands } from '../src/git.js';
 
-const execFile = promisify(execFileCallback);
-const args = process.argv.slice(2);
-const KNOWN_OPTIONS = new Set([
-  '--changelog-only',
-  '--commit',
-  '--dry-run',
-  '--format',
-  '--from',
-  '--help',
-  '--no-fetch',
-  '--push',
-  '--remote',
-  '--skip-commit',
-  '--tag',
-  '--tag-prefix',
-  '--types',
-  '--version',
-  '--version-only',
-]);
+const OPTIONS = {
+  'changelog-only': { type: 'boolean' },
+  commit: { type: 'boolean' },
+  'dry-run': { type: 'boolean' },
+  format: { type: 'string' },
+  from: { type: 'string' },
+  help: { type: 'boolean' },
+  'no-fetch': { type: 'boolean' },
+  push: { type: 'boolean' },
+  remote: { type: 'string' },
+  'skip-commit': { type: 'boolean' },
+  tag: { type: 'boolean' },
+  'tag-prefix': { type: 'string' },
+  types: { type: 'string' },
+  version: { type: 'boolean' },
+  'version-only': { type: 'boolean' },
+};
 
 try {
-  if (flag(args, '--help')) {
+  const { values: flags } = parseArgs({ options: OPTIONS });
+  if (flags.help) {
     console.log(helpText());
     process.exit(0);
   }
-  if (flag(args, '--version')) {
+  if (flags.version) {
     const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
     console.log(pkg.version);
     process.exit(0);
   }
 
-  const options = await releaseOptions(args);
+  const options = await releaseOptions(flags);
   assertFormat(options.format);
   const result = await runRelease(options);
   printResult(result, options);
@@ -51,16 +50,17 @@ try {
   for (const action of result.actions) {
     console.log(`- ${action}`);
   }
-  if (options.push && !options.dryRun && createsTag(options)) {
-    const pushArgs = ['push', '--follow-tags', result.remote, result.branch];
+  if (!options.dryRun) {
+    const commands = releaseGitCommands(result);
     console.log('');
-    console.log(`Running: git ${pushArgs.join(' ')}`);
-    await execFile('git', pushArgs, { encoding: 'utf8' });
-  } else if (!options.dryRun) {
-    console.log('');
-    console.log('Next steps:');
-    for (const instruction of nextStepInstructions(result, options)) {
-      console.log(instruction);
+    if (options.push && result.createdTag) {
+      console.log(`Running: ${formatGitCommand(commands.push)}`);
+      await git(process.cwd(), commands.push);
+    } else {
+      console.log('Next steps:');
+      for (const instruction of nextStepInstructions(result, options, commands)) {
+        console.log(instruction);
+      }
     }
   }
 } catch (error) {
@@ -68,41 +68,49 @@ try {
   process.exitCode = 1;
 }
 
-async function releaseOptions(args) {
-  rejectUnknownOptions(args);
+async function releaseOptions(flags) {
+  for (const [name, value] of Object.entries(flags)) {
+    if (value === '' && name !== 'tag-prefix') {
+      throw new Error(`--${name} requires a value.`);
+    }
+  }
   const config = await readConfig();
-  const versionOnly = flag(args, '--version-only') ?? config.versionOnly ?? false;
-  const changelogOnly = flag(args, '--changelog-only') ?? config.changelogOnly ?? false;
-  const skipCommit = flag(args, '--skip-commit') ?? config.skipCommit ?? false;
-  const push = flag(args, '--push') ?? config.push ?? false;
-  const commitFlag = flag(args, '--commit');
-  const tagFlag = flag(args, '--tag');
-  const writesOnly = skipCommit || versionOnly || changelogOnly;
-  const tag = !writesOnly && (push || (tagFlag ?? config.tag ?? (commitFlag || config.commit ? false : true)));
-  const commit = tag || (!writesOnly && (commitFlag ?? config.commit ?? false));
+  const versionOnly = flags['version-only'] ?? config.versionOnly ?? false;
+  const changelogOnly = flags['changelog-only'] ?? config.changelogOnly ?? false;
   if (versionOnly && changelogOnly) {
     throw new Error('--version-only cannot be combined with --changelog-only.');
   }
-  if (skipCommit && (commitFlag || tagFlag || config.commit || config.tag || push)) {
-    throw new Error('--skip-commit cannot be combined with --commit, --tag, or --push.');
-  }
+  const requestedAction = gitAction({ ...flags, skipCommit: flags['skip-commit'] });
+  const selectedAction = requestedAction ?? gitAction(config) ?? 'tag';
+  const action = versionOnly || changelogOnly ? 'none' : selectedAction;
   return {
-    ...config,
-    dryRun: flag(args, '--dry-run') ?? config.dryRun ?? false,
-    noFetch: flag(args, '--no-fetch') ?? config.noFetch ?? false,
-    commit,
-    tag,
-    push,
-    skipCommit,
+    dryRun: flags['dry-run'] ?? config.dryRun ?? false,
+    noFetch: flags['no-fetch'] ?? config.noFetch ?? false,
+    commit: action === 'commit',
+    tag: action === 'tag',
+    push: action === 'push',
     versionOnly,
     changelogOnly,
-    from: value(args, '--from') ?? config.from,
-    format: value(args, '--format') ?? config.format ?? 'short',
-    remote: value(args, '--remote') ?? config.remote ?? 'origin',
-    tagPrefix: value(args, '--tag-prefix') ?? config.tagPrefix ?? 'v',
-    types: parseTypes(value(args, '--types')) ?? config.types,
+    from: flags.from ?? config.from,
+    format: flags.format ?? config.format ?? 'short',
+    remote: flags.remote ?? config.remote ?? 'origin',
+    tagPrefix: flags['tag-prefix'] ?? config.tagPrefix ?? 'v',
+    types: flags.types?.split(',').map((type) => type.trim()).filter(Boolean) ?? config.types,
     changelogSections: config.changelogSections,
   };
+}
+
+function gitAction({ skipCommit, push, tag, commit }) {
+  if (skipCommit) {
+    if (push || tag || commit) {
+      throw new Error('--skip-commit cannot be combined with --commit, --tag, or --push.');
+    }
+    return 'none';
+  }
+  if (push) return 'push';
+  if (tag) return 'tag';
+  if (commit) return 'commit';
+  return tag === false ? 'none' : undefined;
 }
 
 async function readConfig() {
@@ -113,34 +121,6 @@ async function readConfig() {
       return {};
     }
     throw error;
-  }
-}
-
-function flag(args, name) {
-  return args.includes(name) ? true : undefined;
-}
-
-function value(args, name) {
-  const index = args.indexOf(name);
-  if (index < 0) {
-    return undefined;
-  }
-  const found = args[index + 1];
-  if (!found || found.startsWith('--')) {
-    throw new Error(`${name} requires a value.`);
-  }
-  return found;
-}
-
-function parseTypes(types) {
-  return types?.split(',').map((type) => type.trim()).filter(Boolean);
-}
-
-function rejectUnknownOptions(args) {
-  for (const arg of args) {
-    if (arg.startsWith('--') && !KNOWN_OPTIONS.has(arg)) {
-      throw new Error(`Unknown option ${arg}. Run calver-bump --help for usage.`);
-    }
   }
 }
 
@@ -163,40 +143,40 @@ function printResult(result, options) {
   console.log(options.dryRun ? 'Planned actions:' : 'Completed actions:');
 }
 
-function createsCommit(options) {
-  return Boolean(options.commit || options.tag || options.push) && !options.skipCommit && !options.versionOnly && !options.changelogOnly;
+function formatGitCommand(args) {
+  const shellArgs = args.map((arg) => /^[\w./:+=-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`);
+  return `git ${shellArgs.join(' ')}`;
 }
 
-function createsTag(options) {
-  return Boolean(options.tag || options.push) && createsCommit(options);
-}
-
-function nextStepInstructions(result, options) {
+function nextStepInstructions(result, options, commands) {
   if (options.versionOnly || options.changelogOnly) {
     return ['Review the generated file changes.'];
   }
-  if (!createsCommit(options)) {
+  const push = commands.push
+    ? formatGitCommand(commands.push)
+    : 'Put the release commit on a branch before pushing.';
+  if (!result.createdTag && !options.commit) {
     return [
       'Review CHANGELOG.md, then run:',
-      `git add ${result.files.join(' ')}`,
-      `git commit -m "chore(release): ${result.version}"`,
-      `git tag -a ${result.tag} -m "Release ${result.version}"`,
-      `git push --follow-tags ${result.remote} ${result.branch}`,
+      formatGitCommand(commands.add),
+      formatGitCommand(commands.commit),
+      formatGitCommand(commands.tag),
+      push,
     ];
   }
-  if (!createsTag(options)) {
+  if (!result.createdTag) {
     return [
       'Review the release commit, then run:',
       'git show --stat HEAD',
-      `git tag -a ${result.tag} -m "Release ${result.version}"`,
-      `git push --follow-tags ${result.remote} ${result.branch}`,
+      formatGitCommand(commands.tag),
+      push,
     ];
   }
   return [
     'Review the release commit:',
     'git show --stat HEAD',
     'Push the release commit and tag:',
-    `git push --follow-tags ${result.remote} ${result.branch}`,
+    push,
     'Trigger or verify your deployment pipeline.',
   ];
 }

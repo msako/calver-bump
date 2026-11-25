@@ -151,6 +151,8 @@ Project defaults can be stored in `.calverbumprc.json`:
 }
 ```
 
+Explicit `--commit`, `--tag`, `--push`, and `--skip-commit` flags override the configured Git action.
+
 ## Runtime support
 
 `calver-bump` supports Node.js LTS lines only. The current supported runtime range is Node.js 22 and Node.js 24.
@@ -165,20 +167,20 @@ The package includes a manual GitHub Actions publish workflow. Run the `Publish`
 - The optional `compact` format is `YYMMDD` for the first release of the day, then `YYMMDD.1`, `YYMMDD.2`, etc.
 - The optional `long` format is `YYYY.MM.DD` for the first release of the day, then `YYYY.MM.DD.1`, `YYYY.MM.DD.2`, etc.
 - Changelog release headings use the CalVer version only and do not append a separate `YYYY-MM-DD` date.
-- Existing `v`-prefixed tags are considered when calculating the next sequence number.
+- The next sequence number uses existing tags with the configured prefix, the `v` prefix, or an empty prefix.
+- The CLI fetches remote tags before choosing the version. Use `--no-fetch` to use local tags only.
 - Changelog ranges start from the nearest reachable tag, even when it is not a CalVer tag.
 - Changelog entries include conventional commit subjects only, such as `feat:`, `fix(scope):`, or `chore!:`.
 - Changelog entries are grouped into `Features`, `Fixes`, and `Other Changes` by default. Use `changelogSections` to assign additional conventional commit types to named sections.
-- Changelog entries link to GitHub pull requests or GitLab merge requests when the local git message includes references such as `#123`, `Merge pull request #123`, `!123`, or `See merge request group/project!123`.
-- Changelog entries fall back to commit hash links for GitHub and GitLab-style remotes when no pull/merge request reference is found.
-- Release entries include a `Full Changelog` section with a deduped list of pull/merge requests found in the release range, including the local commit title when available.
+- Changelog entries show a seven-character commit hash in plain text. If the commit message includes a request reference, the entry also shows its label, such as `#123` or `!123`.
+- The `Full Changelog` section lists each pull request or merge request once, with its commit title when available.
+- For GitHub and GitLab remotes, the `Full Changelog` section includes a `Compare changes` link when the release has a base tag.
 - Later releases prepend only commits since the previous nearest reachable tag.
 - Plain `calver-bump` creates the release commit and annotated tag by default.
 - Use `--commit` to create only the release commit.
 - Use `--tag` to create the release commit and annotated tag.
 - Use `--skip-commit` to update files only without creating a release commit or tag.
-- Use `--push` to create the release commit, create the annotated tag, and push both.
-- Release tags are annotated so `git push --follow-tags <remote> <branch>` pushes them.
-- Unrelated dirty working-tree files do not block a release; only release files are staged.
+- Use `--push` from an attached branch to push that branch and the exact annotated release tag.
+- Release commits include only the files listed in the release plan. Unrelated staged changes stay staged.
 - Existing release tags are rejected before files are written.
 - If tag creation fails after the release commit, the CLI undoes its own commit and leaves the file changes in the working tree for inspection or recovery.

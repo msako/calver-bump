@@ -7,6 +7,17 @@ export async function git(cwd, args) {
   return execFile('git', args, { cwd, encoding: 'utf8' });
 }
 
+export function releaseGitCommands({ version, files, remote, branch, tag }) {
+  const branchRef = `refs/heads/${branch}`;
+  const tagRef = `refs/tags/${tag}`;
+  return {
+    add: ['add', '--', ...files],
+    commit: ['commit', '--only', '-m', `chore(release): ${version}`, '--', ...files],
+    tag: ['tag', '-a', tag, '-m', `Release ${version}`],
+    push: branch === 'HEAD' ? null : ['push', '--no-follow-tags', '--', remote, `${branchRef}:${branchRef}`, `${tagRef}:${tagRef}`],
+  };
+}
+
 export async function gitLines(cwd, args) {
   const { stdout } = await git(cwd, args);
   return stdout.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -32,13 +43,11 @@ export async function getRemoteUrl(cwd, remote) {
   }
 }
 
-export async function fetchTags(cwd, remote) {
+export async function tryFetchTags(cwd, remote) {
   try {
     await git(cwd, ['remote', 'get-url', remote]);
     await git(cwd, ['fetch', '--tags', remote]);
-  } catch {
-    // Local/offline repos can still release using tags already present.
-  }
+  } catch {}
 }
 
 export async function currentBranch(cwd) {
