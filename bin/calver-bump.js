@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 
 import { runRelease } from '../src/index.js';
 import { assertFormat } from '../src/calver.js';
-import { git, releaseGitCommands } from '../src/git.js';
+import { getRemoteUrl, git, releaseGitCommands } from '../src/git.js';
 
 const OPTIONS = {
   'changelog-only': { type: 'boolean' },
@@ -53,7 +54,14 @@ try {
   if (!options.dryRun) {
     const commands = releaseGitCommands(result);
     console.log('');
-    if (options.push && result.createdTag) {
+    const shouldPush = result.createdTag && commands.push && (
+      options.push || (
+        process.stdin.isTTY && process.stdout.isTTY &&
+        await getRemoteUrl(process.cwd(), result.remote) &&
+        await confirmPush(result)
+      )
+    );
+    if (shouldPush) {
       console.log(`Running: ${formatGitCommand(commands.push)}`);
       await git(process.cwd(), commands.push);
     } else {
@@ -66,6 +74,23 @@ try {
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
+}
+
+function confirmPush({ branch, createdTag, remote }) {
+  const terminal = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    const cancel = () => {
+      console.log('');
+      resolve(false);
+    };
+    terminal.once('close', cancel);
+    terminal.once('SIGINT', () => terminal.close());
+    terminal.question(`Push ${branch} and ${createdTag} to ${remote}? [y/N] `, (answer) => {
+      terminal.off('close', cancel);
+      terminal.close();
+      resolve(/^(y|yes)$/i.test(answer.trim()));
+    });
+  });
 }
 
 async function releaseOptions(flags) {
@@ -196,10 +221,13 @@ Options:
   --commit               Create the release commit after updating files.
   --tag                  Create the release commit and annotated tag.
   --skip-commit          Explicitly update files without creating a release commit or tag.
-  --push                 Create, tag, and push the release.
+  --push                 Create, tag, and push the release without asking.
   --remote <name>        Remote used for fetch, links, and push.
   --version              Print the calver-bump package version.
   --help                 Show this help.
+
+After creating a tag on a branch, calver-bump asks whether to push when
+stdin and stdout are terminals and the remote is configured.
 
 Configuration:
   Project defaults can be stored in .calverbumprc.json.`;

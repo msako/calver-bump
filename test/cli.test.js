@@ -100,8 +100,10 @@ test('CLI does not print push guidance for version-only releases', async () => {
   assert.doesNotMatch(result.stdout, /^git push |^Running: git push /m);
 });
 
-test('CLI creates a release commit and tag by default', async () => {
+test('CLI creates a local release commit and tag by default without a terminal', async () => {
+  const remote = await makeBareRepo();
   const repo = await makeRepo();
+  execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo });
   const cliPath = path.resolve('bin/calver-bump.js');
 
   const result = spawnSync(process.execPath, [cliPath], {
@@ -113,6 +115,7 @@ test('CLI creates a release commit and tag by default', async () => {
   const version = await packageVersion(repo);
   assert.match(version, /^\d{2}\.\d{4}$/);
   assert.match(result.stdout, /Next steps:/);
+  assert.doesNotMatch(result.stdout, /\[y\/N\]|^Running: git push /m);
   assert.ok(result.stdout.includes(`create git commit chore(release): ${version}`));
   assert.ok(result.stdout.includes(`create git tag v${version}`));
   assert.ok(result.stdout.includes(`git push --no-follow-tags -- origin refs/heads/main:refs/heads/main refs/tags/v${version}:refs/tags/v${version}`));
@@ -121,6 +124,11 @@ test('CLI creates a release commit and tag by default', async () => {
     encoding: 'utf8',
   }).trim();
   assert.equal(tag, `v${version}`);
+  const remoteRefs = execFileSync('git', ['for-each-ref'], {
+    cwd: remote,
+    encoding: 'utf8',
+  });
+  assert.equal(remoteRefs, '');
 });
 
 test('CLI accepts an empty tag prefix for an unprefixed release tag', async () => {

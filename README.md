@@ -37,6 +37,7 @@ npx calver-bump
 ```
 
 By default, `calver-bump` updates release files, creates a release commit, and creates an annotated `v`-prefixed git tag.
+After creating the tag on a branch, `calver-bump` asks whether to push the branch and tag to the configured remote when both input and output are terminals. Press Enter to keep the release local and see the next steps.
 
 Preview the planned release without writing files:
 
@@ -74,7 +75,7 @@ Create an unprefixed git tag while keeping the default package version unchanged
 npx calver-bump --tag-prefix ""
 ```
 
-Push the release commit and annotated tag:
+Push the release branch and annotated tag without confirmation.
 
 ```bash
 npx calver-bump --push
@@ -152,6 +153,7 @@ Project defaults can be stored in `.calverbumprc.json`:
 ```
 
 Explicit `--commit`, `--tag`, `--push`, and `--skip-commit` flags override the configured Git action.
+Set `"push": true` to push the release without confirmation.
 
 ## Runtime support
 
