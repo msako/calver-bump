@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -86,6 +87,26 @@ test('CLI dry-run output includes release audit details', async () => {
   assert.match(result.stdout, /Planned actions:/);
 });
 
+test('CLI version-only preview fetches remote tags without pruning local tags', async () => {
+  const repo = await makeRepo();
+  gitOutput(repo, 'remote', 'add', 'origin', await makeBareRepo());
+  gitOutput(repo, 'tag', 'published');
+  gitOutput(repo, 'push', 'origin', 'main', 'refs/tags/published');
+  gitOutput(repo, 'tag', '-d', 'published');
+  gitOutput(repo, 'tag', '-a', 'local-unpublished', '-m', 'Local release');
+  gitOutput(repo, 'config', 'fetch.prune', 'true');
+  gitOutput(repo, 'config', 'fetch.pruneTags', 'true');
+
+  const result = spawnSync(process.execPath, [path.resolve('bin/calver-bump.js'), '--version-only', '--dry-run'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(gitOutput(repo, 'tag', '--list'), 'local-unpublished\npublished');
+  assert.equal(await packageVersion(repo), '0.0.0');
+});
+
 test('CLI does not print push guidance for version-only releases', async () => {
   const repo = await makeRepo();
   const cliPath = path.resolve('bin/calver-bump.js');
@@ -118,7 +139,7 @@ test('CLI creates a local release commit and tag by default without a terminal',
   assert.doesNotMatch(result.stdout, /\[y\/N\]|^Running: git push /m);
   assert.ok(result.stdout.includes(`create git commit chore(release): ${version}`));
   assert.ok(result.stdout.includes(`create git tag v${version}`));
-  assert.ok(result.stdout.includes(`git push --no-follow-tags -- origin refs/heads/main:refs/heads/main refs/tags/v${version}:refs/tags/v${version}`));
+  assert.ok(result.stdout.includes(releasePushLine(repo, 'origin', `v${version}`)));
   const tag = execFileSync('git', ['tag', '--list'], {
     cwd: repo,
     encoding: 'utf8',
@@ -202,7 +223,69 @@ test('CLI pushes the exact branch and tag despite configured push mappings and t
   assert.equal(remoteHead, execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }));
   const remoteBranches = execFileSync('git', ['for-each-ref', '--format=%(refname)', 'refs/heads'], { cwd: remote, encoding: 'utf8' });
   assert.equal(remoteBranches, 'refs/heads/main\n');
-  assert.ok(result.stdout.includes(`Running: git push --no-follow-tags -- origin refs/heads/main:refs/heads/main refs/tags/v${version}:refs/tags/v${version}`));
+  assert.ok(result.stdout.includes(`Running: ${releasePushLine(repo, 'origin', `v${version}`)}`));
+});
+
+test('CLI leaves both remote refs unchanged when the release branch push is rejected', async () => {
+  const repo = await makeRepo();
+  const remote = await makeBareRepo();
+  gitOutput(repo, 'remote', 'add', 'origin', remote);
+  gitOutput(repo, 'switch', '-c', 'upstream');
+  gitOutput(repo, 'commit', '--allow-empty', '-m', 'feat: upstream change');
+  gitOutput(repo, 'push', 'origin', 'refs/heads/upstream:refs/heads/main');
+  const upstream = gitOutput(repo, 'rev-parse', 'HEAD');
+  gitOutput(repo, 'switch', 'main');
+
+  const result = spawnSync(process.execPath, [path.resolve('bin/calver-bump.js'), '--push', '--no-fetch'], {
+    cwd: repo,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /non-fast-forward/);
+  assert.equal(gitOutput(remote, 'rev-parse', 'refs/heads/main'), upstream);
+  assert.equal(gitOutput(remote, 'tag', '--list'), '');
+  assert.equal(gitOutput(repo, 'tag', '--list'), `v${await packageVersion(repo)}`);
+});
+
+test('CLI confirmation pushes the release objects captured before the refs move', { timeout: 15000 }, async (t) => {
+  const repo = await makeRepo();
+  const remote = await makeBareRepo();
+  gitOutput(repo, 'remote', 'add', 'origin', remote);
+  const mockTerminal = `data:text/javascript,${encodeURIComponent('process.stdin.isTTY = process.stdout.isTTY = true;')}`;
+  const child = spawn(process.execPath, ['--import', mockTerminal, path.resolve('bin/calver-bump.js'), '--no-fetch'], {
+    cwd: repo,
+    stdio: 'pipe',
+  });
+  t.after(() => child.kill());
+  const closed = once(child, 'close');
+  let stderr = '';
+  child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
+
+  let stdout = '';
+  let approved;
+  for await (const chunk of child.stdout.setEncoding('utf8')) {
+    stdout += chunk;
+    if (approved || !stdout.includes('[y/N]')) continue;
+    const tag = `v${await packageVersion(repo)}`;
+    const tagRef = `refs/tags/${tag}`;
+    approved = {
+      tagRef,
+      tagOid: gitOutput(repo, 'rev-parse', tagRef),
+      commitOid: gitOutput(repo, 'rev-parse', 'HEAD'),
+    };
+    gitOutput(repo, 'commit', '--allow-empty', '-m', 'wip: local draft');
+    gitOutput(repo, 'tag', '-fa', tag, '-m', 'Replacement tag');
+    gitOutput(repo, 'branch', approved.commitOid);
+    gitOutput(repo, 'branch', approved.tagOid);
+    child.stdin.end('yes\n');
+  }
+
+  const [status] = await closed;
+  assert.equal(status, 0, stderr);
+  assert.ok(approved, stdout);
+  assert.equal(gitOutput(remote, 'rev-parse', 'refs/heads/main'), approved.commitOid);
+  assert.equal(gitOutput(remote, 'rev-parse', approved.tagRef), approved.tagOid);
 });
 
 test('CLI supports --remote with --push', async () => {
@@ -218,7 +301,7 @@ test('CLI supports --remote with --push', async () => {
 
   assert.equal(result.status, 0, result.stderr);
   const version = await packageVersion(repo);
-  assert.ok(result.stdout.includes(`Running: git push --no-follow-tags -- upstream refs/heads/main:refs/heads/main refs/tags/v${version}:refs/tags/v${version}`));
+  assert.ok(result.stdout.includes(`Running: ${releasePushLine(repo, 'upstream', `v${version}`)}`));
 });
 
 test('CLI --commit overrides a configured tag action', async () => {
@@ -299,6 +382,38 @@ test('CLI rejects a detached-HEAD push before writing release files', async () =
   assert.match(result.stderr, /detached HEAD/);
   assert.equal(execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' }), '');
 });
+
+test('CLI rejects a pending merge in a linked worktree before writing or staging release files', async () => {
+  const repo = await makeRepo();
+  const linked = path.join(await mkdtemp(path.join(tmpdir(), 'calver-bump-linked-')), 'release');
+  gitOutput(repo, 'worktree', 'add', '-b', 'release', linked);
+  gitOutput(repo, 'switch', '-c', 'feature');
+  await writeFile(path.join(repo, 'feature.txt'), 'new feature\n');
+  gitOutput(repo, 'add', 'feature.txt');
+  gitOutput(repo, 'commit', '-m', 'feat: add feature');
+  gitOutput(linked, 'merge', '--no-ff', '--no-commit', 'feature');
+  const before = gitOutput(linked, 'status', '--porcelain');
+
+  const result = spawnSync(process.execPath, [path.resolve('bin/calver-bump.js'), '--no-fetch'], {
+    cwd: linked,
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 1);
+  assert.equal(gitOutput(linked, 'status', '--porcelain'), before);
+  assert.equal(await packageVersion(linked), '0.0.0');
+  assert.match(result.stderr, /merge.*in progress/i);
+});
+
+function gitOutput(cwd, ...args) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function releasePushLine(repo, remote, tag) {
+  const commitOid = gitOutput(repo, 'rev-parse', 'HEAD');
+  const tagOid = gitOutput(repo, 'rev-parse', `refs/tags/${tag}`);
+  return `git push --atomic --no-follow-tags -- ${remote} '${commitOid}^{object}:refs/heads/main' '${tagOid}^{object}:refs/tags/${tag}'`;
+}
 
 async function packageVersion(repo) {
   return JSON.parse(await readFile(path.join(repo, 'package.json'), 'utf8')).version;

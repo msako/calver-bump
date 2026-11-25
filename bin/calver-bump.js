@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 
 import { runRelease } from '../src/index.js';
 import { assertFormat } from '../src/calver.js';
-import { getRemoteUrl, git, releaseGitCommands } from '../src/git.js';
+import { getRemoteUrl, git, releaseGitCommands, releaseSnapshot } from '../src/git.js';
 
 const OPTIONS = {
   'changelog-only': { type: 'boolean' },
@@ -40,6 +40,7 @@ try {
   const options = await releaseOptions(flags);
   assertFormat(options.format);
   const result = await runRelease(options);
+  const snapshot = result.createdTag ? await releaseSnapshot(process.cwd(), result.createdTag) : null;
   printResult(result, options);
   if (result.warnings.length > 0) {
     console.log('');
@@ -52,7 +53,7 @@ try {
     console.log(`- ${action}`);
   }
   if (!options.dryRun) {
-    const commands = releaseGitCommands(result);
+    const commands = releaseGitCommands(result, snapshot);
     console.log('');
     const shouldPush = result.createdTag && commands.push && (
       options.push || (
@@ -66,7 +67,7 @@ try {
       await git(process.cwd(), commands.push);
     } else {
       console.log('Next steps:');
-      for (const instruction of nextStepInstructions(result, options, commands)) {
+      for (const instruction of nextStepInstructions(result, options, commands, snapshot)) {
         console.log(instruction);
       }
     }
@@ -173,7 +174,7 @@ function formatGitCommand(args) {
   return `git ${shellArgs.join(' ')}`;
 }
 
-function nextStepInstructions(result, options, commands) {
+function nextStepInstructions(result, options, commands, snapshot) {
   if (options.versionOnly || options.changelogOnly) {
     return ['Review the generated file changes.'];
   }
@@ -199,7 +200,7 @@ function nextStepInstructions(result, options, commands) {
   }
   return [
     'Review the release commit:',
-    'git show --stat HEAD',
+    formatGitCommand(['show', '--stat', snapshot.commitOid]),
     'Push the release commit and tag:',
     push,
     'Trigger or verify your deployment pipeline.',

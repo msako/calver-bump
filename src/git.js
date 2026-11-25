@@ -1,4 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process';
+import { lstat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCallback);
@@ -7,15 +9,27 @@ export async function git(cwd, args) {
   return execFile('git', args, { cwd, encoding: 'utf8' });
 }
 
-export function releaseGitCommands({ version, files, remote, branch, tag }) {
+export function releaseGitCommands({ version, files, remote, branch, tag }, snapshot) {
   const branchRef = `refs/heads/${branch}`;
   const tagRef = `refs/tags/${tag}`;
+  const branchSource = snapshot ? `${snapshot.commitOid}^{object}` : branchRef;
+  const tagSource = snapshot ? `${snapshot.tagOid}^{object}` : tagRef;
   return {
     add: ['add', '--', ...files],
     commit: ['commit', '--only', '-m', `chore(release): ${version}`, '--', ...files],
     tag: ['tag', '-a', tag, '-m', `Release ${version}`],
-    push: branch === 'HEAD' ? null : ['push', '--no-follow-tags', '--', remote, `${branchRef}:${branchRef}`, `${tagRef}:${tagRef}`],
+    push: branch === 'HEAD' ? null : [
+      'push', '--atomic', '--no-follow-tags', '--', remote,
+      `${branchSource}:${branchRef}`, `${tagSource}:${tagRef}`,
+    ],
   };
+}
+
+export async function releaseSnapshot(cwd, tag) {
+  const { stdout: tagObject } = await git(cwd, ['rev-parse', '--verify', '--end-of-options', `refs/tags/${tag}^{tag}`]);
+  const tagOid = tagObject.trim();
+  const { stdout: commitObject } = await git(cwd, ['rev-parse', '--verify', '--end-of-options', `${tagOid}^{commit}`]);
+  return { commitOid: commitObject.trim(), tagOid };
 }
 
 export async function gitLines(cwd, args) {
@@ -46,7 +60,7 @@ export async function getRemoteUrl(cwd, remote) {
 export async function tryFetchTags(cwd, remote) {
   try {
     await git(cwd, ['remote', 'get-url', remote]);
-    await git(cwd, ['fetch', '--tags', remote]);
+    await git(cwd, ['fetch', '--tags', '--no-prune', '--no-prune-tags', remote]);
   } catch {}
 }
 
@@ -64,6 +78,19 @@ export async function assertCleanWorktree(cwd) {
   if (status.length > 0) {
     throw new Error('Working tree is not clean. Commit or stash changes before releasing.');
   }
+}
+
+export async function assertNoMergeInProgress(cwd) {
+  const { stdout } = await git(cwd, ['rev-parse', '--git-path', 'MERGE_HEAD']);
+  try {
+    await lstat(resolve(cwd, stdout.trimEnd()));
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+  throw new Error('A Git merge is in progress. Finish or abort the merge before creating a release commit.');
 }
 
 export async function tagExists(cwd, tag) {
