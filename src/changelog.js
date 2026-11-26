@@ -157,12 +157,21 @@ function formatCommitEntry(commit) {
     formatLinkedLabel(commit.request?.label, commit.request?.url),
   ].filter(Boolean);
   const suffix = ` (${references.join(', ')})`;
-  return `${commit.subject}${suffix}`;
+  return `${stripLinkedGitHubRequestSuffix(commit.subject, commit.request)}${suffix}`;
 }
 
 function formatRequestEntry(request) {
   const label = formatLinkedLabel(request.label, request.url);
-  return request.title ? `${label} ${request.title}` : label;
+  const title = request.title && stripLinkedGitHubRequestSuffix(request.title, request);
+  return title ? `${label} ${title}` : label;
+}
+
+function stripLinkedGitHubRequestSuffix(title, request) {
+  if (request?.provider !== 'github' || !request.url) {
+    return title;
+  }
+  const suffix = ` (${request.label})`;
+  return title.endsWith(suffix) ? title.slice(0, -suffix.length) : title;
 }
 
 function formatLinkedLabel(label, url) {

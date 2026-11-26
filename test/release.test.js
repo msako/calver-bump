@@ -369,12 +369,13 @@ test('runRelease links changelog commits for private GitLab-style remotes', asyn
   );
 });
 
-test('runRelease links GitHub pull requests on the first release and preserves commit subjects', async () => {
+test('runRelease renders each GitHub squash PR number once per changelog row on the first release', async () => {
   const repo = await makeRepo();
   execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:msako/demo-app.git'], { cwd: repo });
   await writeFile(path.join(repo, 'feature.txt'), 'feature\n');
   execFileSync('git', ['add', 'feature.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-m', 'feat: add pull request links (#42)'], { cwd: repo });
+  const hash = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
 
   await runRelease({
     cwd: repo,
@@ -383,13 +384,16 @@ test('runRelease links GitHub pull requests on the first release and preserves c
   });
 
   const changelog = await readFile(path.join(repo, 'CHANGELOG.md'), 'utf8');
-  assert.match(
-    changelog,
-    /- feat: add pull request links \(#42\) \(\[[a-f0-9]{7}\]\([^)]+\), \[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\)\)/,
+  const repoUrl = 'https://github.com/msako/demo-app';
+  const request = `[#42](${repoUrl}/pull/42)`;
+  const commit = `[${hash.slice(0, 7)}](${repoUrl}/commit/${hash})`;
+  assert.equal(
+    changelog.split('\n').find((line) => line.startsWith('- feat:')),
+    `- feat: add pull request links (${commit}, ${request})`,
   );
-  assert.match(
-    changelog,
-    /### Full Changelog\n\n- \[#42\]\(https:\/\/github\.com\/msako\/demo-app\/pull\/42\) feat: add pull request links \(#42\)\n/,
+  assert.equal(
+    changelog.split('### Full Changelog\n\n')[1]?.trim(),
+    `- ${request} feat: add pull request links`,
   );
   assert.doesNotMatch(changelog, /Compare changes/);
 });
