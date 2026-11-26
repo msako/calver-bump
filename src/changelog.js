@@ -10,11 +10,11 @@ export async function releaseNotes(cwd, options = {}) {
   const existingChangelog = options.existingChangelog ?? '';
   const latestTag = options.from ?? await latestReleaseTag(cwd, existingChangelog);
   const range = latestTag ? [`${latestTag}..HEAD`] : [];
-  const commits = (await gitCommits(cwd, range))
-    .map(parseCommit)
-    .filter((commit) => !commit.isRelease);
   const remoteUrl = await getRemoteUrl(cwd, options.remote ?? 'origin');
-  const compareUrlBuilder = remoteUrl ? buildCompareUrlBuilder(remoteUrl) : null;
+  const links = remoteUrl ? buildRepositoryLinks(remoteUrl) : null;
+  const commits = (await gitCommits(cwd, range))
+    .map((commit) => parseCommit(commit, links))
+    .filter((commit) => !commit.isRelease);
   const allowedTypes = options.types ?? DEFAULT_TYPES;
   const conventionalCommits = dedupeConventionalChanges(commits
     .filter((commit) => commit.type && allowedTypes.includes(commit.type))
@@ -23,7 +23,7 @@ export async function releaseNotes(cwd, options = {}) {
   return {
     previousTag: latestTag,
     range: latestTag ? `${latestTag}..HEAD` : 'HEAD',
-    compareUrlBuilder,
+    compareUrlBuilder: links?.compareUrl ?? null,
     changes: conventionalCommits.length > 0 ? conventionalCommits : ['No conventional commits in this release.'],
     requests,
   };
@@ -98,7 +98,7 @@ function isCommitInChangelog(commit, changelog) {
   return changelog.includes(commit.hash) || changelog.includes(commit.hash.slice(0, 7));
 }
 
-function parseCommit(commit) {
+function parseCommit(commit, links) {
   const message = `${commit.subject}\n${commit.body ?? ''}`;
   const lines = message.split('\n').map((line) => line.trim()).filter(Boolean);
   let subject = commit.subject;
@@ -117,12 +117,16 @@ function parseCommit(commit) {
     request.title = type
       ? subject
       : lines.find((line) => !parseRequestReference(line) && !/^Merge\b/i.test(line)) ?? null;
+    if (request.provider === links?.provider) {
+      request.url = links.requestUrl(request);
+    }
   }
 
   return {
     ...commit,
     subject,
     type,
+    url: links?.commitUrl(commit.hash),
     isRelease: /^chore\(release\):\s.+/.test(subject),
     request,
   };
@@ -148,40 +152,58 @@ function conventionalType(subject) {
 }
 
 function formatCommitEntry(commit) {
-  const shortHash = commit.hash.slice(0, 7);
   const references = [
-    shortHash,
-    commit.request?.label,
+    formatLinkedLabel(commit.hash.slice(0, 7), commit.url),
+    formatLinkedLabel(commit.request?.label, commit.request?.url),
   ].filter(Boolean);
   const suffix = ` (${references.join(', ')})`;
   return `${commit.subject}${suffix}`;
 }
 
 function formatRequestEntry(request) {
-  return request.title ? `${request.label} ${request.title}` : request.label;
+  const label = formatLinkedLabel(request.label, request.url);
+  return request.title ? `${label} ${request.title}` : label;
 }
 
-function buildCompareUrlBuilder(remote) {
+function formatLinkedLabel(label, url) {
+  return url ? `[${label}](${url})` : label;
+}
+
+function buildRepositoryLinks(remote) {
   const parsed = parseGitRemote(remote);
   if (!parsed) {
     return null;
   }
 
-  const baseUrl = `https://${parsed.host}/${parsed.repo}`;
-  if (parsed.host === 'github.com') {
-    return (from, to) => `${baseUrl}/compare/${from}...${to}`;
-  }
-  if (parsed.host.includes('gitlab')) {
-    return (from, to) => `${baseUrl}/-/compare/${from}...${to}`;
+  const github = parsed.host === 'github.com';
+  if (!github && !parsed.host.includes('gitlab')) {
+    return null;
   }
 
-  return null;
+  const hostUrl = `https://${parsed.host}`;
+  const baseUrl = `${hostUrl}/${parsed.repo}${github ? '' : '/-'}`;
+  return {
+    provider: github ? 'github' : 'gitlab',
+    compareUrl: (from, to) => `${baseUrl}/compare/${from}...${to}`,
+    commitUrl: (hash) => `${baseUrl}/commit/${hash}`,
+    requestUrl({ number, project }) {
+      if (github) {
+        return `${baseUrl}/pull/${number}`;
+      }
+      const repo = project?.replace(/\.git$/, '') ?? parsed.repo;
+      if (project && (!/^[\w.-]+(?:\/[\w.-]+)+$/.test(repo) || /(?:^|\/)\.\.?(?:\/|$)/.test(repo))) {
+        return null;
+      }
+      return `${hostUrl}/${repo}/-/merge_requests/${number}`;
+    },
+  };
 }
 
 function parseRequestReference(message) {
-  const gitlabMerge = /(?:^|[\s(])(?:See merge request\s+\S+!|!)(?<number>\d+)(?=\D|$)/i.exec(message);
+  const gitlabMerge = /(?:^|[\s(])(?:See merge request\s+(?<project>\S+)!|!)(?<number>\d+)(?=\D|$)/i.exec(message);
   if (gitlabMerge) {
-    return { provider: 'gitlab', number: gitlabMerge.groups.number, label: `!${gitlabMerge.groups.number}` };
+    const { number, project } = gitlabMerge.groups;
+    return { provider: 'gitlab', number, label: `!${number}`, project };
   }
 
   const githubPull = /(?:Merge pull request\s+#|#)(?<number>\d+)(?=\D|$)/i.exec(message);
@@ -193,21 +215,17 @@ function parseRequestReference(message) {
 }
 
 function uniqueRequests(requests) {
-  const seen = new Set();
-  const unique = [];
+  const unique = new Map();
   for (const request of requests) {
-    const key = `${request.provider}:${request.number}`;
-    if (seen.has(key)) {
-      const existing = unique.find((candidate) => `${candidate.provider}:${candidate.number}` === key);
-      if (existing && !existing.title && request.title) {
-        existing.title = request.title;
-      }
-      continue;
+    const key = request.url ?? `${request.provider}:${request.number}`;
+    const existing = unique.get(key);
+    if (!existing) {
+      unique.set(key, request);
+    } else if (!existing.title && request.title) {
+      existing.title = request.title;
     }
-    seen.add(key);
-    unique.push(request);
   }
-  return unique;
+  return [...unique.values()];
 }
 
 function parseGitRemote(remote) {
@@ -216,10 +234,14 @@ function parseGitRemote(remote) {
     return sshMatch.groups;
   }
 
-  const httpsMatch = /^https?:\/\/(?<host>[^/]+)\/(?<repo>.+?)(?:\.git)?$/.exec(remote);
-  if (httpsMatch) {
-    return httpsMatch.groups;
+  if (!/^https?:\/\//.test(remote)) {
+    return null;
   }
 
-  return null;
+  try {
+    const { host, pathname } = new URL(remote);
+    return pathname.length > 1 ? { host, repo: pathname.slice(1).replace(/\.git$/, '') } : null;
+  } catch {
+    return null;
+  }
 }
